@@ -1,0 +1,22 @@
+/* dbxtop default dark theme */
+Screen {
+    background: $surface;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+DataTable {
+    height: 1fr;
+}
+
+Header {
+    dock: top;
+    height: 1;
+}
+
+Footer {
+    dock: bottom;
+    height: 1;
+}
