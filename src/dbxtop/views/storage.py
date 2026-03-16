@@ -45,6 +45,12 @@ class StorageView(BaseView):
 
     def compose(self) -> ComposeResult:
         yield Static("Waiting for Spark application...", classes="spark-unavailable", id="storage-placeholder")
+        yield Static("No cached RDDs or DataFrames", classes="empty-state", id="storage-empty")
+        yield Static("", id="storage-summary")
+        table: DataTable[str] = DataTable(id="storage-table")
+        table.display = False
+        table.add_columns(*_COLUMNS)
+        yield table
 
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render storage table from cache."""
@@ -54,17 +60,21 @@ class StorageView(BaseView):
             return
 
         try:
-            self.query_one("#storage-placeholder").remove()
+            self.query_one("#storage-placeholder").display = False
         except Exception:
             pass
 
-        # Clear existing children
-        for child in list(self.children):
-            child.remove()
+        table = self.query_one("#storage-table", DataTable)
+        empty_msg = self.query_one("#storage-empty", Static)
+        summary_widget = self.query_one("#storage-summary", Static)
 
         if not rdds:
-            self.mount(Static("No cached RDDs or DataFrames", classes="empty-state"))
+            table.display = False
+            summary_widget.display = False
+            empty_msg.display = True
             return
+
+        empty_msg.display = False
 
         rows = self._build_rows(rdds)
 
@@ -79,10 +89,11 @@ class StorageView(BaseView):
         summary = (
             f"  Cached: {len(rdds)} RDDs  |  Memory: {format_bytes(total_mem)}  |  Disk: {format_bytes(total_disk)}"
         )
-        self.mount(Static(summary))
+        summary_widget.update(summary)
+        summary_widget.display = True
 
-        table: DataTable[str] = DataTable()
-        table.add_columns(*_COLUMNS)
+        table.display = True
+        table.clear()
         for row in rows:
             table.add_row(
                 str(row["rdd_id"]),
@@ -93,8 +104,6 @@ class StorageView(BaseView):
                 row["disk_display"],
                 row["cached_pct"],
             )
-
-        self.mount(table)
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""

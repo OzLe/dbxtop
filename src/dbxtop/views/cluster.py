@@ -117,11 +117,44 @@ class ClusterView(BaseView):
     """
 
     def compose(self) -> ComposeResult:
-        """Build the initial placeholder layout."""
+        """Build the stable layout — widgets are updated in-place on refresh."""
         yield Static("Connecting to cluster...", classes="empty-state", id="cluster-placeholder")
+        yield Static("", classes="cluster-identity", id="cluster-identity")
+        yield Static("Resources", classes="cluster-section-title", id="cluster-res-title")
+        yield Static("", classes="cluster-resources", id="cluster-resources")
+        yield Static("Spark Configuration", classes="cluster-section-title", id="cluster-conf-title")
+        yield Static("", classes="cluster-sparkconf", id="cluster-sparkconf")
+        yield Static("", classes="cluster-state-card", id="cluster-state-card")
+        yield Static("Events", classes="cluster-section-title", id="cluster-events-title")
+        events_table: DataTable[str] = DataTable(classes="events-table", id="cluster-events-table")
+        events_table.add_columns("Timestamp", "Event Type", "Details")
+        yield events_table
+        yield Static("Libraries", classes="cluster-section-title", id="cluster-libs-title")
+        libs_table: DataTable[str] = DataTable(classes="libraries-table", id="cluster-libs-table")
+        libs_table.add_columns("Library", "Type", "Status")
+        yield libs_table
+
+    def on_mount(self) -> None:
+        """Hide all sections until data arrives."""
+        for widget_id in (
+            "cluster-identity",
+            "cluster-res-title",
+            "cluster-resources",
+            "cluster-conf-title",
+            "cluster-sparkconf",
+            "cluster-state-card",
+            "cluster-events-title",
+            "cluster-events-table",
+            "cluster-libs-title",
+            "cluster-libs-table",
+        ):
+            try:
+                self.query_one(f"#{widget_id}").display = False
+            except Exception:
+                pass
 
     def refresh_data(self, cache: DataCache) -> None:
-        """Re-render all sections from cache data."""
+        """Re-render all sections from cache data using in-place updates."""
         cluster_slot = cache.get("cluster")
         events_slot = cache.get("events")
         libs_slot = cache.get("libraries")
@@ -130,51 +163,79 @@ class ClusterView(BaseView):
         if info is None:
             return
 
-        # Remove placeholder if still present
+        # Hide placeholder
         try:
-            self.query_one("#cluster-placeholder").remove()
+            self.query_one("#cluster-placeholder").display = False
         except Exception:
             pass
 
-        # Re-mount everything (simple full-refresh strategy)
-        self._clear_children()
-
         # Identity card
-        self.mount(self._build_identity(info))
+        identity = self.query_one("#cluster-identity", Static)
+        identity.update(self._build_identity_text(info))
+        identity.display = True
 
-        # Resource gauges
-        self.mount(Static("Resources", classes="cluster-section-title"))
-        self.mount(self._build_resources(info))
+        # Resources
+        self.query_one("#cluster-res-title").display = True
+        resources = self.query_one("#cluster-resources", Static)
+        resources.update(self._build_resources_text(info))
+        resources.display = True
 
         # Spark configuration
         if info.spark_conf:
-            self.mount(Static("Spark Configuration", classes="cluster-section-title"))
-            self.mount(self._build_spark_conf(info))
+            self.query_one("#cluster-conf-title").display = True
+            sparkconf = self.query_one("#cluster-sparkconf", Static)
+            sparkconf.update(self._build_spark_conf_text(info))
+            sparkconf.display = True
+        else:
+            self.query_one("#cluster-conf-title").display = False
+            self.query_one("#cluster-sparkconf").display = False
 
         # State card
-        self.mount(self._build_state_card(info))
+        state_card = self.query_one("#cluster-state-card", Static)
+        state_card.update(self._build_state_card_text(info))
+        state_card.display = True
 
         # Events table
         events: Optional[List[ClusterEvent]] = events_slot.data
+        events_title = self.query_one("#cluster-events-title")
+        events_table = self.query_one("#cluster-events-table", DataTable)
         if events:
-            self.mount(Static("Events", classes="cluster-section-title"))
-            self.mount(self._build_events_table(events))
+            events_title.display = True
+            events_table.display = True
+            events_table.clear()
+            for event in events[:20]:
+                ts = format_timestamp(event.timestamp)
+                etype = event.event_type
+                colour = _EVENT_COLOURS.get(etype, "")
+                styled_type = f"[{colour}]{etype}[/{colour}]" if colour else etype
+                detail = event.message or ""
+                if len(detail) > 80:
+                    detail = detail[:77] + "..."
+                events_table.add_row(ts, styled_type, detail)
+        else:
+            events_title.display = False
+            events_table.display = False
 
         # Libraries table
         libs: Optional[List[LibraryInfo]] = libs_slot.data
+        libs_title = self.query_one("#cluster-libs-title")
+        libs_table = self.query_one("#cluster-libs-table", DataTable)
         if libs:
-            self.mount(Static("Libraries", classes="cluster-section-title"))
-            self.mount(self._build_libraries_table(libs))
+            libs_title.display = True
+            libs_table.display = True
+            libs_table.clear()
+            for lib in libs:
+                colour = _LIB_STATUS_COLOURS.get(lib.status, "")
+                styled_status = f"[{colour}]{lib.status}[/{colour}]" if colour else lib.status
+                libs_table.add_row(lib.name, lib.library_type, styled_status)
+        else:
+            libs_title.display = False
+            libs_table.display = False
 
-    def _clear_children(self) -> None:
-        """Remove all child widgets for a full refresh."""
-        for child in list(self.children):
-            child.remove()
-
-    # -- identity card -------------------------------------------------------
+    # -- text builders (return strings for in-place widget updates) -----------
 
     @staticmethod
-    def _build_identity(info: ClusterInfo) -> Static:
+    def _build_identity_text(info: ClusterInfo) -> str:
         lines = [
             f"[bold]{info.cluster_name}[/bold]  ({info.cluster_id})",
             f"  Spark: {info.spark_version or '--'}  |  "
@@ -184,12 +245,10 @@ class ClusterView(BaseView):
             if info.autotermination_minutes
             else f"  Creator: {info.creator or '--'}  |  Auto-terminate: disabled",
         ]
-        return Static("\n".join(lines), classes="cluster-identity")
-
-    # -- resource gauges -----------------------------------------------------
+        return "\n".join(lines)
 
     @staticmethod
-    def _build_resources(info: ClusterInfo) -> Static:
+    def _build_resources_text(info: ClusterInfo) -> str:
         mem_gb = info.total_memory_mb / 1024 if info.total_memory_mb else 0
         workers_str = str(info.num_workers)
         if info.autoscale_min is not None and info.autoscale_max is not None:
@@ -202,25 +261,20 @@ class ClusterView(BaseView):
             f"  Driver: {info.driver_node_type or '--'}  |  Worker: {info.worker_node_type or '--'}",
             f"  Uptime: {uptime_str}",
         ]
-        return Static("\n".join(lines), classes="cluster-resources")
-
-    # -- spark conf ----------------------------------------------------------
+        return "\n".join(lines)
 
     @staticmethod
-    def _build_spark_conf(info: ClusterInfo) -> Static:
+    def _build_spark_conf_text(info: ClusterInfo) -> str:
         lines: list[str] = []
         for key, value in sorted(info.spark_conf.items()):
             display_val = value if len(value) <= 60 else value[:57] + "..."
-            # Escape Rich markup in user-provided values
             safe_key = key.replace("[", "\\[")
             safe_val = display_val.replace("[", "\\[")
             lines.append(f"  {safe_key} = {safe_val}")
-        return Static("\n".join(lines) or "  (none)", classes="cluster-sparkconf")
-
-    # -- state card ----------------------------------------------------------
+        return "\n".join(lines) or "  (none)"
 
     @staticmethod
-    def _build_state_card(info: ClusterInfo) -> Static:
+    def _build_state_card_text(info: ClusterInfo) -> str:
         state_str = info.state.value
         colour = _STATE_COLOURS.get(state_str, "dim")
         msg = info.state_message or ""
@@ -228,33 +282,4 @@ class ClusterView(BaseView):
         if msg:
             text += f"\n  {msg}"
         text += "\n"
-        return Static(text, classes="cluster-state-card")
-
-    # -- events sub-table ----------------------------------------------------
-
-    @staticmethod
-    def _build_events_table(events: List[ClusterEvent]) -> DataTable:
-        table: DataTable[str] = DataTable(classes="events-table")
-        table.add_columns("Timestamp", "Event Type", "Details")
-        for event in events[:20]:
-            ts = format_timestamp(event.timestamp)
-            etype = event.event_type
-            colour = _EVENT_COLOURS.get(etype, "")
-            styled_type = f"[{colour}]{etype}[/{colour}]" if colour else etype
-            detail = event.message or ""
-            if len(detail) > 80:
-                detail = detail[:77] + "..."
-            table.add_row(ts, styled_type, detail)
-        return table
-
-    # -- libraries sub-table -------------------------------------------------
-
-    @staticmethod
-    def _build_libraries_table(libs: List[LibraryInfo]) -> DataTable:
-        table: DataTable[str] = DataTable(classes="libraries-table")
-        table.add_columns("Library", "Type", "Status")
-        for lib in libs:
-            colour = _LIB_STATUS_COLOURS.get(lib.status, "")
-            styled_status = f"[{colour}]{lib.status}[/{colour}]" if colour else lib.status
-            table.add_row(lib.name, lib.library_type, styled_status)
-        return table
+        return text

@@ -10,6 +10,16 @@ import os
 from dataclasses import dataclass
 
 
+def _parse_env_float(value: str | None, default: float) -> float:
+    """Parse a float from an environment variable string, returning *default* on failure."""
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable runtime configuration for dbxtop.
@@ -79,10 +89,10 @@ class Settings:
         resolved_cluster_id = cluster_id or os.environ.get("DBXTOP_CLUSTER_ID", "")
 
         env_refresh = os.environ.get("DBXTOP_REFRESH")
-        resolved_fast = refresh if refresh is not None else (float(env_refresh) if env_refresh else 3.0)
+        resolved_fast = refresh if refresh is not None else _parse_env_float(env_refresh, 3.0)
 
         env_slow = os.environ.get("DBXTOP_SLOW_REFRESH")
-        resolved_slow = slow_refresh if slow_refresh is not None else (float(env_slow) if env_slow else 15.0)
+        resolved_slow = slow_refresh if slow_refresh is not None else _parse_env_float(env_slow, 15.0)
 
         resolved_theme = theme or os.environ.get("DBXTOP_THEME", "dark")
 
