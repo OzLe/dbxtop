@@ -67,9 +67,14 @@ class StagesView(BaseView):
         self._sort_index = 0
         self.current_sort_key = "stage_id"
         self.sort_reverse = True
+        self._current_stages: List[SparkStage] = []
 
     def compose(self) -> ComposeResult:
         yield Static("Waiting for Spark application...", classes="spark-unavailable", id="stages-placeholder")
+        table: DataTable[str] = DataTable(id="stages-table")
+        table.display = False
+        table.add_columns(*_COLUMNS)
+        yield table
 
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render stages table from cache."""
@@ -78,10 +83,14 @@ class StagesView(BaseView):
         if stages is None:
             return
 
+        self._current_stages = stages
+
         try:
-            self.query_one("#stages-placeholder").remove()
+            self.query_one("#stages-placeholder").display = False
         except Exception:
             pass
+        table = self.query_one("#stages-table", DataTable)
+        table.display = True
 
         rows = self._build_rows(stages)
 
@@ -96,12 +105,7 @@ class StagesView(BaseView):
             pin_values=["ACTIVE"],
         )
 
-        for child in list(self.children):
-            if isinstance(child, DataTable):
-                child.remove()
-
-        table: DataTable[str] = DataTable()
-        table.add_columns(*_COLUMNS)
+        table.clear()
         for row in rows:
             table.add_row(
                 str(row["stage_id"]),
@@ -117,7 +121,47 @@ class StagesView(BaseView):
                 row["submitted"],
             )
 
-        self.mount(table)
+    def get_selected_detail(self, cache: DataCache) -> Optional[str]:
+        """Return detail text for the currently selected stage row."""
+        try:
+            table = self.query_one("#stages-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            stage_id = int(row_cells[0])
+        except Exception:
+            return None
+
+        stage = next((s for s in self._current_stages if s.stage_id == stage_id), None)
+        if stage is None:
+            return None
+
+        submitted = format_timestamp(stage.submission_time)
+        completed = format_timestamp(stage.completion_time) if stage.completion_time else "running"
+
+        return (
+            f"[bold]Stage {stage.stage_id} (attempt {stage.attempt_id})[/bold]\n\n"
+            f"  Name:        {stage.name}\n"
+            f"  Status:      {stage.status.value}\n"
+            f"  Submitted:   {submitted}\n"
+            f"  Completed:   {completed}\n\n"
+            f"[bold]Tasks[/bold]\n"
+            f"  Total:     {stage.num_tasks}\n"
+            f"  Active:    {stage.num_active_tasks}\n"
+            f"  Complete:  {stage.num_complete_tasks}\n"
+            f"  Failed:    {stage.num_failed_tasks}\n\n"
+            f"[bold]I/O[/bold]\n"
+            f"  Input:         {format_bytes(stage.input_bytes)} ({stage.input_records:,} records)\n"
+            f"  Output:        {format_bytes(stage.output_bytes)} ({stage.output_records:,} records)\n"
+            f"  Shuffle Read:  {format_bytes(stage.shuffle_read_bytes)}\n"
+            f"  Shuffle Write: {format_bytes(stage.shuffle_write_bytes)}\n\n"
+            f"[bold]Resources[/bold]\n"
+            f"  Executor Time: {format_duration(stage.executor_run_time_ms)}\n"
+            f"  CPU Time:      {format_duration(stage.executor_cpu_time_ns // 1_000_000)}\n"
+            f"  Memory Spill:  {format_bytes(stage.memory_spill_bytes)}\n"
+            f"  Disk Spill:    {format_bytes(stage.disk_spill_bytes)}\n\n"
+            f"[dim]Press Escape to close[/dim]"
+        )
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""

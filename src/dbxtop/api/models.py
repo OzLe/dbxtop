@@ -167,6 +167,7 @@ class ClusterInfo(BaseModel):
     autotermination_minutes: int = 0
     spark_conf: Dict[str, str] = Field(default_factory=dict)
     tags: Dict[str, str] = Field(default_factory=dict)
+    spark_context_id: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

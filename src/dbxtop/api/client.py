@@ -46,7 +46,7 @@ class ClusterNotFoundError(Exception):
     """Raised when the target cluster does not exist."""
 
 
-class ConnectionError(Exception):  # noqa: A001
+class DatabricksConnectionError(Exception):
     """Raised when the Databricks workspace is unreachable."""
 
 
@@ -101,13 +101,16 @@ class DatabricksClient:
         if since is not None:
             kwargs["start_time"] = int(since.timestamp() * 1000)
 
-        raw_iter = await self._call(self._workspace.clusters.events, **kwargs)
-        events: List[ClusterEvent] = []
-        for raw_event in raw_iter:
-            events.append(_map_event(raw_event))
-            if len(events) >= 50:
-                break
-        return events
+        def _fetch_events() -> List[ClusterEvent]:
+            raw_iter = self._workspace.clusters.events(**kwargs)
+            events: List[ClusterEvent] = []
+            for raw_event in raw_iter:
+                events.append(_map_event(raw_event))
+                if len(events) >= 50:
+                    break
+            return events
+
+        return await self._call(_fetch_events)
 
     async def get_job_runs(self, active_only: bool = True) -> List[JobRun]:
         """Fetch Databricks job runs.
@@ -118,13 +121,17 @@ class DatabricksClient:
         Returns:
             Up to 20 job runs.
         """
-        raw_iter = await self._call(self._workspace.jobs.list_runs, active_only=active_only)
-        runs: List[JobRun] = []
-        for raw_run in raw_iter:
-            runs.append(_map_job_run(raw_run))
-            if len(runs) >= 20:
-                break
-        return runs
+
+        def _fetch_runs() -> List[JobRun]:
+            raw_iter = self._workspace.jobs.list_runs(active_only=active_only)
+            runs: List[JobRun] = []
+            for raw_run in raw_iter:
+                runs.append(_map_job_run(raw_run))
+                if len(runs) >= 20:
+                    break
+            return runs
+
+        return await self._call(_fetch_runs)
 
     async def get_library_status(self) -> List[LibraryInfo]:
         """Fetch installed library statuses for the cluster.
@@ -132,8 +139,16 @@ class DatabricksClient:
         Returns:
             List of library info models.
         """
-        raw_iter = await self._call(self._workspace.libraries.cluster_status, cluster_id=self._cluster_id)
-        return [_map_library(lib) for lib in (raw_iter or [])]
+
+        def _fetch_libs() -> List[LibraryInfo]:
+            result = self._workspace.libraries.cluster_status(cluster_id=self._cluster_id)
+            if result is None:
+                return []
+            # SDK returns ClusterLibraryStatuses — extract .library_statuses
+            statuses = getattr(result, "library_statuses", None) or []
+            return [_map_library(lib) for lib in statuses]
+
+        return await self._call(_fetch_libs)
 
     async def get_workspace_url(self) -> str:
         """Return the workspace host URL (e.g. ``https://adb-123.1.azuredatabricks.net``)."""
@@ -214,7 +229,7 @@ class DatabricksClient:
             if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
                 raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
             if "timeout" in msg or "connect" in msg:
-                raise ConnectionError(f"Could not reach Databricks workspace: {exc}") from exc
+                raise DatabricksConnectionError(f"Could not reach Databricks workspace: {exc}") from exc
             raise
 
 
@@ -271,6 +286,7 @@ def _map_cluster(raw: ClusterDetails) -> ClusterInfo:
         autotermination_minutes=getattr(raw, "autotermination_minutes", 0) or 0,
         spark_conf=spark_conf,
         tags=tags,
+        spark_context_id=_safe_str(getattr(raw, "spark_context_id", "")),
     )
 
 
@@ -280,12 +296,10 @@ def _map_event(raw: SdkClusterEvent) -> ClusterEvent:
     details: Dict[str, Any] = {}
     raw_details = getattr(raw, "details", None)
     if raw_details is not None:
-        # SDK ClusterEventDetails has various optional attributes
-        for attr in dir(raw_details):
-            if not attr.startswith("_"):
-                val = getattr(raw_details, attr, None)
-                if val is not None and not callable(val):
-                    details[attr] = val
+        try:
+            details = {k: v for k, v in raw_details.as_dict().items() if v is not None}
+        except (AttributeError, TypeError):
+            pass
 
     return ClusterEvent(
         timestamp=ts or datetime.now(timezone.utc),
