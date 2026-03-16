@@ -428,3 +428,17 @@ def format_duration(ms: int) -> str:
 ```
 
 These are used by every view and must handle edge cases: 0, negative values, very large numbers.
+
+<!-- BEGIN GLOBAL RULES -->
+## Global Rules
+
+### Workflow Preferences
+- Always create a feature branch before starting any implementation work. Never commit directly to main or develop without explicit permission.
+- Before implementing anything, state your planned approach including: which files you will modify, which execution engine/environment you will target, and which branch you will work on. Wait for approval before proceeding.
+- After completing an orchestration or babysitter run, stop cleanly. Do not re-trigger stop hooks or send redundant completion messages.
+
+### Tool & Infrastructure Context
+- When debugging MCP server issues: check stdout leaks first (processes writing to stdout corrupt JSON-RPC), verify auth key naming conventions per provider, check binary/bin field availability, and understand which config file controls which client.
+- When working with Databricks/Spark: prefer server-side execution, avoid collecting large datasets to driver, use checkpoint-based lineage breaking for long DAGs, and always confirm the target schema before writing.
+- For IAM/infrastructure work: always verify region settings match the target environment, validate ARN resource scoping before adding permissions, start with minimal permissions and iterate via terraform plan output.
+<!-- END GLOBAL RULES -->
