@@ -18,6 +18,8 @@ from dbxtop.api.spark_api import SparkRESTClient
 from dbxtop.config import Settings
 from dbxtop.views.base import BaseView
 from dbxtop.views.cluster import ClusterView
+from dbxtop.views.jobs import JobsView
+from dbxtop.views.stages import StagesView
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
 
@@ -91,6 +93,7 @@ class DbxTopApp(App[None]):
         Binding("5", "switch_tab('sql')", "SQL", show=False),
         Binding("6", "switch_tab('storage')", "Storage", show=False),
         Binding("r", "force_refresh", "Refresh"),
+        Binding("s", "cycle_sort", "Sort", show=False),
         Binding("question_mark", "toggle_help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -131,9 +134,9 @@ class DbxTopApp(App[None]):
             with TabPane("Cluster", id="cluster"):
                 yield ClusterView()
             with TabPane("Jobs", id="jobs"):
-                yield Static("Waiting for Spark application...", classes="spark-unavailable")
+                yield JobsView()
             with TabPane("Stages", id="stages"):
-                yield Static("Waiting for Spark application...", classes="spark-unavailable")
+                yield StagesView()
             with TabPane("Executors", id="executors"):
                 yield Static("Waiting for Spark application...", classes="spark-unavailable")
             with TabPane("SQL", id="sql"):
@@ -269,6 +272,20 @@ class DbxTopApp(App[None]):
             await self._poller.force_refresh()
         if self._header:
             self._header.reset_countdown()
+
+    def action_cycle_sort(self) -> None:
+        """Cycle the sort column on the active view (if supported)."""
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if hasattr(child, "cycle_sort_column"):
+                    child.cycle_sort_column()
+                    if self._cache is not None and isinstance(child, BaseView):
+                        child.refresh_data(self._cache)
+                    break
+        except Exception:
+            pass
 
     def action_toggle_help(self) -> None:
         """Show or dismiss the help overlay."""
