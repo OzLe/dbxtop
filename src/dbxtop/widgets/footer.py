@@ -37,6 +37,7 @@ class KeyboardFooter(Static):
 
     active_tab: reactive[str] = reactive("cluster")
     spark_connected: reactive[bool] = reactive(False)
+    sdk_only: reactive[bool] = reactive(False)
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", **kwargs)
@@ -53,6 +54,10 @@ class KeyboardFooter(Static):
         """Re-render when Spark connection status changes."""
         self._render_bar()
 
+    def watch_sdk_only(self) -> None:
+        """Re-render when SDK-only mode changes."""
+        self._render_bar()
+
     def _render_bar(self) -> None:
         """Compose and update the footer text."""
         parts: list[str] = [_GLOBAL_HINTS]
@@ -63,6 +68,8 @@ class KeyboardFooter(Static):
 
         if self.spark_connected:
             parts.append("[green]Spark: connected[/green]")
+        elif self.sdk_only:
+            parts.append("[yellow]Spark: SDK only[/yellow]")
         else:
             parts.append("[red]Spark: disconnected[/red]")
 

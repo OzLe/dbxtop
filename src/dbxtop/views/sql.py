@@ -12,7 +12,7 @@ from textual.app import ComposeResult
 from textual.widgets import DataTable, Static
 
 from dbxtop.api.cache import DataCache
-from dbxtop.api.models import SQLQuery, format_duration
+from dbxtop.api.models import SQLQuery, format_duration, format_timestamp
 from dbxtop.views.base import BaseView
 
 _COLUMNS = ("ID", "Description", "Status", "Duration", "Running", "Success", "Failed")
@@ -48,9 +48,15 @@ class SQLView(BaseView):
         self._sort_index = 0
         self.current_sort_key = "execution_id"
         self.sort_reverse = True
+        self._current_queries: List[SQLQuery] = []
 
     def compose(self) -> ComposeResult:
         yield Static("Waiting for Spark application...", classes="spark-unavailable", id="sql-placeholder")
+        yield Static("No SQL queries found", classes="empty-state", id="sql-empty")
+        table: DataTable[str] = DataTable(id="sql-table")
+        table.display = False
+        table.add_columns(*_COLUMNS)
+        yield table
 
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render SQL queries table from cache."""
@@ -59,8 +65,10 @@ class SQLView(BaseView):
         if queries is None:
             return
 
+        self._current_queries = queries
+
         try:
-            self.query_one("#sql-placeholder").remove()
+            self.query_one("#sql-placeholder").display = False
         except Exception:
             pass
 
@@ -77,16 +85,17 @@ class SQLView(BaseView):
             pin_values=["RUNNING"],
         )
 
-        for child in list(self.children):
-            if isinstance(child, DataTable):
-                child.remove()
+        table = self.query_one("#sql-table", DataTable)
+        empty_msg = self.query_one("#sql-empty", Static)
 
         if not rows:
-            self.mount(Static("No SQL queries found", classes="empty-state"))
+            table.display = False
+            empty_msg.display = True
             return
 
-        table: DataTable[str] = DataTable()
-        table.add_columns(*_COLUMNS)
+        empty_msg.display = False
+        table.display = True
+        table.clear()
         for row in rows:
             table.add_row(
                 str(row["execution_id"]),
@@ -98,7 +107,36 @@ class SQLView(BaseView):
                 row["failed_display"],
             )
 
-        self.mount(table)
+    def get_selected_detail(self, cache: DataCache) -> Optional[str]:
+        """Return detail text for the currently selected SQL query row."""
+        try:
+            table = self.query_one("#sql-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            exec_id = int(row_cells[0])
+        except Exception:
+            return None
+
+        query = next((q for q in self._current_queries if q.execution_id == exec_id), None)
+        if query is None:
+            return None
+
+        submitted = format_timestamp(query.submission_time)
+        duration = format_duration(query.duration_ms) if query.duration_ms else "running"
+
+        return (
+            f"[bold]SQL Query {query.execution_id}[/bold]\n\n"
+            f"  Description:  {query.description}\n"
+            f"  Status:       {query.status}\n"
+            f"  Submitted:    {submitted}\n"
+            f"  Duration:     {duration}\n\n"
+            f"[bold]Jobs[/bold]\n"
+            f"  Running:   {query.running_jobs}\n"
+            f"  Success:   {query.success_jobs}\n"
+            f"  Failed:    {query.failed_jobs}\n\n"
+            f"[dim]Press Escape to close[/dim]"
+        )
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""

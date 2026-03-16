@@ -53,9 +53,14 @@ class JobsView(BaseView):
         self._sort_index = 0
         self.current_sort_key = "job_id"
         self.sort_reverse = True  # newest first
+        self._current_jobs: List[SparkJob] = []
 
     def compose(self) -> ComposeResult:
         yield Static("Waiting for Spark application...", classes="spark-unavailable", id="jobs-placeholder")
+        table: DataTable[str] = DataTable(id="jobs-table")
+        table.display = False
+        table.add_columns(*_COLUMNS)
+        yield table
 
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render the jobs table from cache."""
@@ -64,11 +69,15 @@ class JobsView(BaseView):
         if jobs is None:
             return
 
-        # Remove placeholder
+        self._current_jobs = jobs
+
+        # Hide placeholder, show table
         try:
-            self.query_one("#jobs-placeholder").remove()
+            self.query_one("#jobs-placeholder").display = False
         except Exception:
             pass
+        table = self.query_one("#jobs-table", DataTable)
+        table.display = True
 
         # Build row dicts
         rows = self._build_rows(jobs)
@@ -86,14 +95,8 @@ class JobsView(BaseView):
             pin_values=["RUNNING"],
         )
 
-        # Remove existing table if present
-        for child in list(self.children):
-            if isinstance(child, DataTable):
-                child.remove()
-
-        # Build fresh table
-        table: DataTable[str] = DataTable()
-        table.add_columns(*_COLUMNS)
+        # In-place update: clear and re-add rows
+        table.clear()
         for row in rows:
             table.add_row(
                 str(row["job_id"]),
@@ -105,7 +108,48 @@ class JobsView(BaseView):
                 row["submitted"],
             )
 
-        self.mount(table)
+    def get_selected_detail(self, cache: DataCache) -> Optional[str]:
+        """Return detail text for the currently selected job row."""
+        try:
+            table = self.query_one("#jobs-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            job_id = int(row_cells[0])
+        except Exception:
+            return None
+
+        job = next((j for j in self._current_jobs if j.job_id == job_id), None)
+        if job is None:
+            return None
+
+        submitted = format_timestamp(job.submission_time)
+        completed = format_timestamp(job.completion_time) if job.completion_time else "running"
+        duration = "--"
+        if job.submission_time:
+            elapsed_ms = int((datetime.now(timezone.utc) - job.submission_time).total_seconds() * 1000)
+            duration = format_duration(elapsed_ms)
+
+        return (
+            f"[bold]Job {job.job_id}[/bold]\n\n"
+            f"  Description:  {job.name}\n"
+            f"  Status:       {job.status.value}\n"
+            f"  Submitted:    {submitted}\n"
+            f"  Completed:    {completed}\n"
+            f"  Duration:     {duration}\n\n"
+            f"[bold]Tasks[/bold]\n"
+            f"  Total:     {job.num_tasks}\n"
+            f"  Active:    {job.num_active_tasks}\n"
+            f"  Completed: {job.num_completed_tasks}\n"
+            f"  Failed:    {job.num_failed_tasks}\n\n"
+            f"[bold]Stages[/bold]\n"
+            f"  Total:     {job.num_stages}\n"
+            f"  Active:    {job.num_active_stages}\n"
+            f"  Completed: {job.num_completed_stages}\n"
+            f"  Failed:    {job.num_failed_stages}\n"
+            f"  IDs:       {job.stage_ids}\n\n"
+            f"[dim]Press Escape to close[/dim]"
+        )
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""

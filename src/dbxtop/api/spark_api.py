@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
@@ -51,6 +51,7 @@ class SparkRESTClient:
         org_id: str,
         port: int = 40001,
         token: Optional[str] = None,
+        token_provider: Optional[Callable[[], str]] = None,
         timeout: float = 10.0,
     ) -> None:
         self._workspace_url = workspace_url.rstrip("/")
@@ -61,9 +62,10 @@ class SparkRESTClient:
         self._available = False
         self._rate_limit_backoff: float = 0.0
         self._rate_limited: bool = False
+        self._token_provider = token_provider
 
         headers: Dict[str, str] = {}
-        if token:
+        if not token_provider and token:
             headers["Authorization"] = f"Bearer {token}"
 
         self._client = httpx.AsyncClient(
@@ -98,7 +100,10 @@ class SparkRESTClient:
         """
         url = f"{self._base_url}/api/v1/applications"
         try:
-            resp = await self._client.get(url)
+            headers: Optional[Dict[str, str]] = None
+            if self._token_provider:
+                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            resp = await self._client.get(url, headers=headers)
             resp.raise_for_status()
             apps = resp.json()
             if not apps:
@@ -108,7 +113,7 @@ class SparkRESTClient:
             self._available = True
             logger.info("Discovered Spark app: %s", self._app_id)
             return self._app_id
-        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException, ValueError, KeyError) as exc:
             self._available = False
             raise RuntimeError(f"Could not discover Spark application: {exc}") from exc
 
@@ -125,7 +130,7 @@ class SparkRESTClient:
             resp = await self._client.get(f"{self._base_url}/api/v1/applications")
             self._available = resp.is_success
             return self._available
-        except (httpx.ConnectError, httpx.TimeoutException):
+        except httpx.TransportError:
             self._available = False
             return False
 
@@ -239,7 +244,10 @@ class SparkRESTClient:
 
         url = self._app_url(endpoint)
         try:
-            resp = await self._client.get(url, params=params)
+            headers: Optional[Dict[str, str]] = None
+            if self._token_provider:
+                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            resp = await self._client.get(url, params=params, headers=headers)
 
             # Rate limit handling
             if resp.status_code == 429:
@@ -324,7 +332,7 @@ def _map_spark_job(raw: Dict[str, Any]) -> SparkJob:
         num_active_tasks=_safe_int(raw.get("numActiveTasks")),
         num_completed_tasks=_safe_int(raw.get("numCompletedTasks")),
         num_failed_tasks=_safe_int(raw.get("numFailedTasks")),
-        num_stages=_safe_int(raw.get("numStages", raw.get("stageIds", []))),
+        num_stages=_safe_int(raw.get("numStages")) or len(raw.get("stageIds", [])),
         num_active_stages=_safe_int(raw.get("numActiveStages")),
         num_completed_stages=_safe_int(raw.get("numCompletedStages")),
         num_failed_stages=_safe_int(raw.get("numFailedStages")),
@@ -397,9 +405,9 @@ def _map_sql(raw: Dict[str, Any]) -> SQLQuery:
         description=raw.get("description", ""),
         submission_time=_parse_spark_ts(raw.get("submissionTime")),
         duration_ms=_safe_int(raw.get("duration")),
-        running_jobs=_safe_int(raw.get("runningJobIds", [])),
-        success_jobs=_safe_int(raw.get("successJobIds", [])),
-        failed_jobs=_safe_int(raw.get("failedJobIds", [])),
+        running_jobs=len(raw.get("runningJobIds", [])),
+        success_jobs=len(raw.get("successJobIds", [])),
+        failed_jobs=len(raw.get("failedJobIds", [])),
     )
 
 
