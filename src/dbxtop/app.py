@@ -20,6 +20,9 @@ from dbxtop.views.base import BaseView
 from dbxtop.views.cluster import ClusterView
 from dbxtop.views.jobs import JobsView
 from dbxtop.views.stages import StagesView
+from dbxtop.views.executors import ExecutorsView
+from dbxtop.views.sql import SQLView
+from dbxtop.views.storage import StorageView
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
 
@@ -138,11 +141,11 @@ class DbxTopApp(App[None]):
             with TabPane("Stages", id="stages"):
                 yield StagesView()
             with TabPane("Executors", id="executors"):
-                yield Static("Waiting for Spark application...", classes="spark-unavailable")
+                yield ExecutorsView()
             with TabPane("SQL", id="sql"):
-                yield Static("Waiting for Spark application...", classes="spark-unavailable")
+                yield SQLView()
             with TabPane("Storage", id="storage"):
-                yield Static("Waiting for Spark application...", classes="spark-unavailable")
+                yield StorageView()
 
         self._footer = KeyboardFooter()
         yield self._footer
