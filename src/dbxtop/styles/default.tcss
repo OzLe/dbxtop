@@ -1,4 +1,4 @@
-/* dbxtop default dark theme */
+/* dbxtop default theme — uses Textual CSS variables that adapt to dark/light */
 
 /* -- Layout ------------------------------------------------------------ */
 
@@ -100,4 +100,13 @@ DataTable > .datatable--hover {
     content-align: center middle;
     color: $text-muted;
     text-style: italic;
+}
+
+/* -- Error screens ----------------------------------------------------- */
+
+.error-screen {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: red;
 }
