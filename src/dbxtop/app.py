@@ -18,10 +18,10 @@ from dbxtop.api.spark_api import SparkRESTClient
 from dbxtop.config import Settings
 from dbxtop.views.base import BaseView
 from dbxtop.views.cluster import ClusterView
-from dbxtop.views.jobs import JobsView
-from dbxtop.views.stages import StagesView
 from dbxtop.views.executors import ExecutorsView
+from dbxtop.views.jobs import JobsView
 from dbxtop.views.sql import SQLView
+from dbxtop.views.stages import StagesView
 from dbxtop.views.storage import StorageView
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
@@ -30,8 +30,44 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Help overlay
+# Error / auth screens
 # ---------------------------------------------------------------------------
+
+
+class AuthErrorScreen(ModalScreen[None]):
+    """Full-screen modal shown when Databricks authentication fails."""
+
+    BINDINGS = [Binding("escape", "dismiss", "Close"), Binding("q", "quit_app", "Quit")]
+
+    DEFAULT_CSS = """
+    AuthErrorScreen {
+        align: center middle;
+    }
+    AuthErrorScreen > Static {
+        width: 70;
+        height: auto;
+        padding: 2 3;
+        border: thick $error;
+        background: $surface;
+    }
+    """
+
+    def __init__(self, message: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"[bold red]Authentication Failed[/bold red]\n\n"
+            f"{self._message}\n\n"
+            f"[dim]Please refresh your Databricks token or check your profile configuration.[/dim]\n"
+            f"[dim]  1. Run: databricks auth login --profile <profile>[/dim]\n"
+            f"[dim]  2. Or update ~/.databrickscfg with a valid token[/dim]\n\n"
+            f"Press [bold]Escape[/bold] to dismiss or [bold]q[/bold] to quit."
+        )
+
+    def action_quit_app(self) -> None:
+        self.app.exit()
 
 
 class HelpScreen(ModalScreen[None]):
@@ -110,6 +146,9 @@ class DbxTopApp(App[None]):
         theme_name: str = "dark",
     ) -> None:
         super().__init__()
+        # Apply light/dark theme via Textual's built-in theme system
+        if theme_name == "light":
+            self.theme = "textual-light"
         self._profile = profile
         self._cluster_id = cluster_id
         self._refresh_interval = refresh_interval
@@ -214,15 +253,12 @@ class DbxTopApp(App[None]):
             )
             await self._spark_client.discover_app_id()
 
-            if self._header:
-                self._header.spark_available = True
-            if self._footer:
-                self._footer.spark_connected = True
-
+            self._update_spark_status(True)
             logger.info("Spark REST client initialised")
         except Exception as exc:
             logger.info("Spark REST not available yet: %s", exc)
             self._spark_client = None
+            self._update_spark_status(False)
 
     async def on_unmount(self) -> None:
         """Clean up poller and clients on app exit."""
@@ -232,25 +268,82 @@ class DbxTopApp(App[None]):
     # -- data update handler -------------------------------------------------
 
     def on_data_updated(self, event: DataUpdated) -> None:
-        """Forward cache updates to the header and active view."""
+        """Forward cache updates to the header and active view.
+
+        Also handles error state detection:
+        - Auth errors → show auth error screen, stop polling
+        - Cluster terminated → update Spark status indicators
+        - Rate limiting → show indicator in footer
+        """
         if self._cache is None:
             return
 
-        # Update header
+        # Check for auth errors in any slot
+        for slot_name in event.updated_slots:
+            slot = self._cache.get(slot_name)
+            if slot.error and ("authentication" in slot.error.lower() or "401" in slot.error or "403" in slot.error):
+                self._handle_auth_error(slot.error)
+                return
+
+        # Update header on cluster data
         if self._header and "cluster" in event.updated_slots:
             self._header.update_from_cache(self._cache)
+            self._handle_cluster_state_change()
 
-            # Update Spark availability status
-            cluster_slot = self._cache.get("cluster")
-            if cluster_slot.data is not None:
-                is_running = cluster_slot.data.state == ClusterState.RUNNING
-                spark_ok = self._spark_client is not None and is_running
-                if self._header:
-                    self._header.spark_available = spark_ok
-                if self._footer:
-                    self._footer.spark_connected = spark_ok
+        # Update rate limit / connection status in footer
+        self._update_footer_status()
 
         # Forward to active view
+        self._forward_to_active_view()
+
+    def _handle_cluster_state_change(self) -> None:
+        """Update Spark availability based on cluster state."""
+        if self._cache is None:
+            return
+        cluster_slot = self._cache.get("cluster")
+        if cluster_slot.data is None:
+            return
+
+        state = cluster_slot.data.state
+        is_running = state == ClusterState.RUNNING
+        spark_ok = self._spark_client is not None and is_running
+
+        self._update_spark_status(spark_ok)
+
+        # If cluster just came back to RUNNING and we have no Spark client, try reconnecting
+        if is_running and self._spark_client is None and self._dbx_client is not None:
+            self.call_later(self._try_init_spark_client)
+
+    def _handle_auth_error(self, error_msg: str) -> None:
+        """Show auth error modal and stop polling."""
+        logger.error("Authentication error detected: %s", error_msg)
+        if self._poller:
+            self.call_later(self._poller.stop)
+        self.push_screen(AuthErrorScreen(error_msg))
+
+    def _update_spark_status(self, connected: bool) -> None:
+        """Update Spark connection indicators in header and footer."""
+        if self._header:
+            self._header.spark_available = connected
+        if self._footer:
+            self._footer.spark_connected = connected
+
+    def _update_footer_status(self) -> None:
+        """Update footer with rate limit and SDK-only mode indicators."""
+        if self._footer is None:
+            return
+
+        # Check rate limiting
+        if self._spark_client and self._spark_client.is_rate_limited:
+            self._footer.spark_connected = False
+        # Check if we're in SDK-only mode
+        elif self._spark_client is None:
+            self._footer.spark_connected = False
+
+    def _forward_to_active_view(self) -> None:
+        """Forward cache data to the currently active view."""
+        if self._cache is None:
+            return
         try:
             tabbed = self.query_one(TabbedContent)
             active_pane = tabbed.get_pane(tabbed.active)
@@ -259,15 +352,18 @@ class DbxTopApp(App[None]):
                     child.refresh_data(self._cache)
                     break
         except Exception:
-            pass  # View not yet mounted or tab mismatch
+            pass
 
     # -- actions -------------------------------------------------------------
 
     def action_switch_tab(self, tab_id: str) -> None:
-        """Switch to a named tab."""
+        """Switch to a named tab and refresh its view."""
         self.query_one(TabbedContent).active = tab_id
         if self._footer:
             self._footer.active_tab = tab_id
+        # Refresh the newly-active view with current cache data
+        if self._cache:
+            self._forward_to_active_view()
 
     async def action_force_refresh(self) -> None:
         """Trigger an immediate full poll cycle."""

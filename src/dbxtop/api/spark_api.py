@@ -59,6 +59,8 @@ class SparkRESTClient:
         self._port = port
         self._app_id: Optional[str] = None
         self._available = False
+        self._rate_limit_backoff: float = 0.0
+        self._rate_limited: bool = False
 
         headers: Dict[str, str] = {}
         if token:
@@ -207,6 +209,11 @@ class SparkRESTClient:
 
     # -- private transport ---------------------------------------------------
 
+    @property
+    def is_rate_limited(self) -> bool:
+        """True if currently backing off due to rate limiting."""
+        return self._rate_limited
+
     async def _get(
         self,
         endpoint: str,
@@ -214,8 +221,8 @@ class SparkRESTClient:
     ) -> Any:
         """Issue a GET request against the Spark REST API.
 
-        On 404 after previously being available, attempts re-discovery
-        of the app ID (the Spark context may have restarted).
+        Handles 404 (app restart), 429 (rate limit), timeouts,
+        and connection errors gracefully.
 
         Returns:
             Parsed JSON response, or ``None`` on failure.
@@ -224,9 +231,28 @@ class SparkRESTClient:
             logger.warning("No Spark app_id — call discover_app_id() first")
             return None
 
+        # Honour rate-limit backoff
+        if self._rate_limit_backoff > 0:
+            import asyncio
+
+            await asyncio.sleep(self._rate_limit_backoff)
+
         url = self._app_url(endpoint)
         try:
             resp = await self._client.get(url, params=params)
+
+            # Rate limit handling
+            if resp.status_code == 429:
+                self._rate_limit_backoff = min((self._rate_limit_backoff or 1.0) * 2, 30.0)
+                self._rate_limited = True
+                logger.warning("Rate limited on %s — backing off %.1fs", endpoint, self._rate_limit_backoff)
+                return None
+
+            # Reset rate limit on success
+            if self._rate_limit_backoff > 0:
+                self._rate_limit_backoff = 0.0
+                self._rate_limited = False
+
             if resp.status_code == 404 and self._available:
                 logger.info("Got 404 — attempting app_id re-discovery")
                 try:
