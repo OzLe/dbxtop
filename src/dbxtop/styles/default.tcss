@@ -1,4 +1,7 @@
 /* dbxtop default dark theme */
+
+/* -- Layout ------------------------------------------------------------ */
+
 Screen {
     background: $surface;
 }
@@ -7,16 +10,94 @@ TabbedContent {
     height: 1fr;
 }
 
+TabPane {
+    padding: 0;
+}
+
 DataTable {
     height: 1fr;
 }
 
-Header {
-    dock: top;
-    height: 1;
+DataTable > .datatable--header {
+    text-style: bold underline;
+    color: $text;
+    background: $surface;
 }
 
-Footer {
-    dock: bottom;
-    height: 1;
+DataTable > .datatable--cursor {
+    background: $accent;
+    color: $text;
+}
+
+DataTable > .datatable--hover {
+    background: $boost;
+}
+
+/* -- Status colours ---------------------------------------------------- */
+
+.status-running {
+    color: green;
+}
+
+.status-succeeded,
+.status-complete {
+    color: $text-muted;
+}
+
+.status-failed {
+    color: red;
+}
+
+.status-pending,
+.status-active {
+    color: yellow;
+}
+
+/* -- Gauges & bars ----------------------------------------------------- */
+
+.progress-bar {
+    color: green;
+}
+
+.progress-bar-failed {
+    color: red;
+}
+
+.memory-bar {
+    color: $accent;
+}
+
+.gc-warning {
+    color: yellow;
+    text-style: bold;
+}
+
+.gc-danger {
+    color: red;
+    text-style: bold;
+}
+
+/* -- Spill indicator --------------------------------------------------- */
+
+.spill-warning {
+    color: yellow;
+}
+
+/* -- Empty / waiting states -------------------------------------------- */
+
+.empty-state {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: $text-muted;
+}
+
+/* -- Spark unavailable message ----------------------------------------- */
+
+.spark-unavailable {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: $text-muted;
+    text-style: italic;
 }
