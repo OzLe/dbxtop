@@ -17,6 +17,7 @@ from dbxtop.api.poller import DataUpdated, MetricsPoller
 from dbxtop.api.spark_api import SparkRESTClient
 from dbxtop.config import Settings
 from dbxtop.views.base import BaseView
+from dbxtop.views.cluster import ClusterView
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
 
@@ -128,7 +129,7 @@ class DbxTopApp(App[None]):
 
         with TabbedContent():
             with TabPane("Cluster", id="cluster"):
-                yield Static("Connecting to cluster...", classes="empty-state")
+                yield ClusterView()
             with TabPane("Jobs", id="jobs"):
                 yield Static("Waiting for Spark application...", classes="spark-unavailable")
             with TabPane("Stages", id="stages"):
