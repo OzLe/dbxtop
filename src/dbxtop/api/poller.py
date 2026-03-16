@@ -3,3 +3,229 @@
 Manages periodic data fetching from the Databricks and Spark APIs,
 supporting both fast (jobs/stages) and slow (cluster/events) refresh intervals.
 """
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Optional, Set
+
+from textual.app import App
+from textual.message import Message
+from textual.timer import Timer
+
+from dbxtop.api.cache import DataCache
+from dbxtop.api.client import DatabricksClient
+from dbxtop.api.models import ClusterState
+from dbxtop.api.spark_api import SparkRESTClient
+from dbxtop.config import Settings
+
+logger = logging.getLogger(__name__)
+
+MAX_BACKOFF_MULTIPLIER: int = 4
+"""Maximum backoff factor for consecutive errors on a single slot."""
+
+
+class DataUpdated(Message):
+    """Posted to the app when the cache receives fresh data.
+
+    Attributes:
+        updated_slots: Names of the cache slots that were updated.
+    """
+
+    def __init__(self, updated_slots: Set[str]) -> None:
+        super().__init__()
+        self.updated_slots = updated_slots
+
+
+class MetricsPoller:
+    """Two-tier async polling orchestrator.
+
+    *Fast* polling (default 3 s) targets high-frequency Spark data:
+    executors, jobs, stages.  *Slow* polling (default 15 s) targets
+    cluster metadata, events, libraries, SQL, and storage.
+
+    Args:
+        dbx_client: Databricks SDK wrapper.
+        spark_client: Spark REST API client (may be ``None`` if Spark is
+            not yet available).
+        cache: Shared data cache.
+        app: The Textual ``App`` instance (used for timers and messaging).
+        settings: Runtime configuration.
+    """
+
+    def __init__(
+        self,
+        dbx_client: DatabricksClient,
+        spark_client: Optional[SparkRESTClient],
+        cache: DataCache,
+        app: App[Any],
+        settings: Settings,
+    ) -> None:
+        self._dbx = dbx_client
+        self._spark: Optional[SparkRESTClient] = spark_client
+        self._cache = cache
+        self._app = app
+        self._settings = settings
+
+        self._fast_timer: Optional[Timer] = None
+        self._slow_timer: Optional[Timer] = None
+        self._error_counts: dict[str, int] = {}
+        self._previous_state: Optional[ClusterState] = None
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def start(self) -> None:
+        """Create and start the fast and slow polling timers."""
+        self._fast_timer = self._app.set_interval(self._settings.fast_poll_s, self._fast_poll, name="fast_poll")
+        self._slow_timer = self._app.set_interval(self._settings.slow_poll_s, self._slow_poll, name="slow_poll")
+        # Trigger an immediate slow poll so data appears on launch
+        self._app.call_later(self._slow_poll)
+
+    async def stop(self) -> None:
+        """Cancel timers and close clients."""
+        if self._fast_timer is not None:
+            self._fast_timer.stop()
+        if self._slow_timer is not None:
+            self._slow_timer.stop()
+        if self._spark is not None:
+            await self._spark.close()
+
+    def set_spark_client(self, client: SparkRESTClient) -> None:
+        """Attach or replace the Spark REST client at runtime.
+
+        Args:
+            client: A newly initialised ``SparkRESTClient``.
+        """
+        self._spark = client
+
+    async def force_refresh(self) -> None:
+        """Trigger an immediate fast *and* slow poll."""
+        await asyncio.gather(self._fast_poll(), self._slow_poll())
+
+    # -- fast poll (executors, jobs, stages) ---------------------------------
+
+    async def _fast_poll(self) -> None:
+        """Poll high-frequency Spark data."""
+        if self._spark is None or not await self._spark.is_available():
+            return
+
+        updated: Set[str] = set()
+
+        results = await asyncio.gather(
+            self._spark.get_executors(),
+            self._spark.get_jobs(),
+            self._spark.get_stages(),
+            return_exceptions=True,
+        )
+
+        slot_names = ("executors", "spark_jobs", "stages")
+        for slot_name, result in zip(slot_names, results):
+            if isinstance(result, BaseException):
+                self._handle_error(slot_name, result)
+            else:
+                self._cache.update(slot_name, result)
+                self._reset_backoff(slot_name)
+                updated.add(slot_name)
+
+        if updated:
+            self._app.post_message(DataUpdated(updated))
+
+    # -- slow poll (cluster, events, libraries, SQL, storage) ----------------
+
+    async def _slow_poll(self) -> None:
+        """Poll low-frequency SDK and Spark data."""
+        updated: Set[str] = set()
+
+        # SDK calls (always available)
+        sdk_results = await asyncio.gather(
+            self._dbx.get_cluster(),
+            self._dbx.get_events(),
+            self._dbx.get_job_runs(),
+            self._dbx.get_library_status(),
+            return_exceptions=True,
+        )
+
+        sdk_slots = ("cluster", "events", "job_runs", "libraries")
+        for slot_name, result in zip(sdk_slots, sdk_results):
+            if isinstance(result, BaseException):
+                self._handle_error(slot_name, result)
+            else:
+                self._cache.update(slot_name, result)
+                self._reset_backoff(slot_name)
+                updated.add(slot_name)
+
+        # Detect cluster state transitions
+        cluster_slot = self._cache.get("cluster")
+        if cluster_slot.data is not None:
+            current_state = cluster_slot.data.state
+            self._handle_state_transition(current_state)
+            self._previous_state = current_state
+
+        # Spark REST calls (only when available)
+        if self._spark is not None and await self._spark.is_available():
+            spark_results = await asyncio.gather(
+                self._spark.get_sql(),
+                self._spark.get_storage(),
+                return_exceptions=True,
+            )
+            spark_slots = ("sql_queries", "storage")
+            for slot_name, result in zip(spark_slots, spark_results):
+                if isinstance(result, BaseException):
+                    self._handle_error(slot_name, result)
+                else:
+                    self._cache.update(slot_name, result)
+                    self._reset_backoff(slot_name)
+                    updated.add(slot_name)
+
+        if updated:
+            self._app.post_message(DataUpdated(updated))
+
+    # -- error / backoff handling --------------------------------------------
+
+    def _handle_error(self, slot_name: str, exc: BaseException) -> None:
+        """Record a polling error and increment the backoff counter."""
+        count = self._error_counts.get(slot_name, 0) + 1
+        self._error_counts[slot_name] = min(count, MAX_BACKOFF_MULTIPLIER)
+        self._cache.mark_error(slot_name, str(exc))
+        logger.warning("Poll error on %s (count=%d): %s", slot_name, count, exc)
+
+    def _reset_backoff(self, slot_name: str) -> None:
+        """Clear the backoff counter for a slot after a successful poll."""
+        self._error_counts.pop(slot_name, None)
+
+    # -- cluster state transitions -------------------------------------------
+
+    def _handle_state_transition(self, current: ClusterState) -> None:
+        """React to cluster state changes.
+
+        * TERMINATED/ERROR → mark all Spark-dependent slots as unavailable.
+        * RUNNING after TERMINATED → attempt Spark REST re-discovery.
+        """
+        prev = self._previous_state
+        if prev == current:
+            return
+
+        if current in (ClusterState.TERMINATED, ClusterState.ERROR):
+            for slot in ("spark_jobs", "stages", "executors", "sql_queries", "storage"):
+                self._cache.mark_error(slot, f"Cluster is {current.value}")
+            logger.info("Cluster transitioned to %s — Spark data unavailable", current.value)
+
+        elif current == ClusterState.RUNNING and prev in (
+            ClusterState.TERMINATED,
+            ClusterState.PENDING,
+            None,
+        ):
+            if self._spark is not None:
+                logger.info("Cluster now RUNNING — attempting Spark app discovery")
+                self._app.call_later(self._try_spark_reconnect)
+
+    async def _try_spark_reconnect(self) -> None:
+        """Attempt to re-discover the Spark application after a cluster restart."""
+        if self._spark is None:
+            return
+        try:
+            await self._spark.discover_app_id()
+            logger.info("Spark app re-discovered successfully")
+        except RuntimeError:
+            logger.info("Spark app not yet available — will retry on next poll")
