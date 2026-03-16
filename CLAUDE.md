@@ -242,13 +242,13 @@ mypy src/dbxtop/
 
 | # | Milestone | Status | Description |
 |---|-----------|--------|-------------|
-| M1 | Core API Infrastructure | Not Started | Pydantic models, API clients, cache, poller |
-| M2 | TUI Shell | Not Started | App wiring, header/footer, base view, CSS |
-| M3 | Cluster View | Not Started | First live data — cluster state, events, libraries |
-| M4 | Jobs + Stages Views | Not Started | Core Spark monitoring with progress bars |
-| M5 | Executors + SQL + Storage | Not Started | Complete all 6 views |
-| M6 | Polish & Error Handling | Not Started | Error states, reconnection, help overlay |
-| M7 | Packaging & Release | Not Started | CI/CD, PyPI, README, snapshot tests |
+| M1 | Core API Infrastructure | Done | Pydantic models, API clients, cache, poller |
+| M2 | TUI Shell | Done | App wiring, header/footer, base view, CSS |
+| M3 | Cluster View | Done | First live data — cluster state, events, libraries |
+| M4 | Jobs + Stages Views | Done | Core Spark monitoring with progress bars |
+| M5 | Executors + SQL + Storage | Done | Complete all 6 views |
+| M6 | Polish & Error Handling | Done | Error states, reconnection, help overlay |
+| M7 | Packaging & Release | Done | CI/CD, PyPI, README, snapshot tests |
 
 Update this table as milestones are completed.
 
