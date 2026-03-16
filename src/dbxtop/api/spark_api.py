@@ -127,7 +127,10 @@ class SparkRESTClient:
         if not self._app_id:
             return False
         try:
-            resp = await self._client.get(f"{self._base_url}/api/v1/applications")
+            headers: Optional[Dict[str, str]] = None
+            if self._token_provider:
+                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            resp = await self._client.get(f"{self._base_url}/api/v1/applications", headers=headers)
             self._available = resp.is_success
             return self._available
         except httpx.TransportError:
