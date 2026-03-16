@@ -141,24 +141,65 @@ class DatabricksClient:
         return (host or "").rstrip("/")
 
     async def get_org_id(self) -> str:
-        """Extract the Databricks org ID from the workspace URL.
+        """Discover the Databricks organisation (workspace) ID.
 
-        The org ID is the numeric portion of ``adb-{org_id}.{N}.azuredatabricks.net``.
-        Falls back to an empty string if extraction fails.
+        Tries three strategies:
+        1. Extract from Azure-style URL: ``adb-{org_id}.{N}.azuredatabricks.net``
+        2. Read ``x-databricks-org-id`` response header from a lightweight API call
+        3. Fall back to empty string
+
+        The result is cached after first successful resolution.
         """
         if self._org_id is not None:
             return self._org_id
+
         host = self._workspace.config.host or ""
+
+        # Strategy 1: Azure URL pattern
         match = re.search(r"adb-(\d+)\.", host)
-        self._org_id = match.group(1) if match else ""
+        if match:
+            self._org_id = match.group(1)
+            return self._org_id
+
+        # Strategy 2: x-databricks-org-id response header (works for AWS/GCP)
+        try:
+            import httpx
+
+            headers = self._workspace.config.authenticate()
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as http:
+                resp = await http.get(
+                    f"{host.rstrip('/')}/api/2.0/workspace/get-status",
+                    params={"path": "/"},
+                    headers=headers,
+                )
+                org = resp.headers.get("x-databricks-org-id", "")
+                if org:
+                    self._org_id = org
+                    return self._org_id
+        except Exception:
+            pass
+
+        self._org_id = ""
         return self._org_id
 
     def get_token(self) -> str:
         """Return the current authentication token (synchronous).
 
+        Supports both PAT tokens and OAuth (via ``authenticate()`` headers).
         Used by ``SparkRESTClient`` for bearer-token auth.
         """
-        return self._workspace.config.token or ""
+        # Try direct token first (PAT)
+        if self._workspace.config.token:
+            return self._workspace.config.token
+        # Fall back to authenticate() which handles OAuth/U2M/etc.
+        try:
+            headers = self._workspace.config.authenticate()
+            auth_header = headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                return auth_header[7:]
+        except Exception:
+            pass
+        return ""
 
     # -- private helpers -----------------------------------------------------
 
@@ -198,7 +239,9 @@ def _safe_str(value: Any) -> str:
 
 def _map_cluster(raw: ClusterDetails) -> ClusterInfo:
     """Map an SDK ``ClusterDetails`` to our ``ClusterInfo`` model."""
-    state_str = _safe_str(getattr(raw, "state", None)).upper()
+    raw_state = getattr(raw, "state", None)
+    # SDK returns an enum (e.g. State.RUNNING) — use .name to get "RUNNING"
+    state_str = getattr(raw_state, "name", _safe_str(raw_state)).upper()
     try:
         state = ClusterState(state_str)
     except ValueError:
