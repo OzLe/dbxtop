@@ -193,7 +193,7 @@ class ClusterView(BaseView):
         mem_gb = info.total_memory_mb / 1024 if info.total_memory_mb else 0
         workers_str = str(info.num_workers)
         if info.autoscale_min is not None and info.autoscale_max is not None:
-            workers_str = f"{info.num_workers} [{info.autoscale_min}-{info.autoscale_max}]"
+            workers_str = f"{info.num_workers} \\[{info.autoscale_min}-{info.autoscale_max}]"
 
         uptime_str = format_duration(info.uptime_seconds * 1000) if info.uptime_seconds else "--"
 
@@ -211,7 +211,10 @@ class ClusterView(BaseView):
         lines: list[str] = []
         for key, value in sorted(info.spark_conf.items()):
             display_val = value if len(value) <= 60 else value[:57] + "..."
-            lines.append(f"  {key} = {display_val}")
+            # Escape Rich markup in user-provided values
+            safe_key = key.replace("[", "\\[")
+            safe_val = display_val.replace("[", "\\[")
+            lines.append(f"  {safe_key} = {safe_val}")
         return Static("\n".join(lines) or "  (none)", classes="cluster-sparkconf")
 
     # -- state card ----------------------------------------------------------
