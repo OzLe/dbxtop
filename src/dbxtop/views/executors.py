@@ -15,6 +15,7 @@ from textual.widgets import DataTable, Static
 from dbxtop.api.cache import DataCache
 from dbxtop.api.models import ExecutorInfo, format_bytes, format_duration
 from dbxtop.views.base import BaseView
+from dbxtop.widgets.spark_line import render_sparkline
 
 _COLUMNS = (
     "ID",
@@ -25,7 +26,9 @@ _COLUMNS = (
     "Done",
     "Failed",
     "Memory",
+    "Mem▁▃▅",
     "GC%",
+    "GC▁▃▅",
     "Disk",
     "Shuf Read",
     "Shuf Write",
@@ -68,6 +71,10 @@ class ExecutorsView(BaseView):
 
     def compose(self) -> ComposeResult:
         yield Static("Waiting for Spark application...", classes="spark-unavailable", id="exec-placeholder")
+        table: DataTable[str] = DataTable(id="exec-table")
+        table.display = False
+        table.add_columns(*_COLUMNS)
+        yield table
 
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render executors table from cache."""
@@ -77,9 +84,20 @@ class ExecutorsView(BaseView):
             return
 
         try:
-            self.query_one("#exec-placeholder").remove()
+            self.query_one("#exec-placeholder").display = False
         except Exception:
             pass
+        table = self.query_one("#exec-table", DataTable)
+        table.display = True
+
+        # Build per-executor sparkline history from cache ring buffer
+        mem_history: Dict[str, list[float]] = {}
+        gc_history: Dict[str, list[float]] = {}
+        for snapshot in cache.get_history("executors"):
+            if isinstance(snapshot, list):
+                for e in snapshot:
+                    mem_history.setdefault(e.executor_id, []).append(e.memory_used_pct)
+                    gc_history.setdefault(e.executor_id, []).append(e.gc_ratio * 100)
 
         rows = self._build_rows(executors)
 
@@ -95,15 +113,11 @@ class ExecutorsView(BaseView):
         dead.sort(key=lambda r: r.get(self.current_sort_key, ""), reverse=self.sort_reverse)
         sorted_rows = driver + active + dead
 
-        # Remove existing table
-        for child in list(self.children):
-            if isinstance(child, DataTable):
-                child.remove()
-
-        table: DataTable[str] = DataTable()
-        table.add_columns(*_COLUMNS)
-
+        table.clear()
         for row in sorted_rows:
+            eid = row["executor_id"]
+            mem_spark = render_sparkline(mem_history.get(eid, []), width=8, min_val=0, max_val=100)
+            gc_spark = render_sparkline(gc_history.get(eid, []), width=8, min_val=0)
             table.add_row(
                 row["id_display"],
                 row["host_display"],
@@ -113,7 +127,9 @@ class ExecutorsView(BaseView):
                 str(row["completed_tasks"]),
                 row["failed_display"],
                 row["memory_display"],
+                mem_spark,
                 row["gc_display"],
+                gc_spark,
                 row["disk_display"],
                 row["shuf_read"],
                 row["shuf_write"],
@@ -139,15 +155,15 @@ class ExecutorsView(BaseView):
                 str(sum(e.completed_tasks for e in executors)),
                 str(sum(e.failed_tasks for e in executors)),
                 mem_summary,
+                "",
                 f"{avg_gc:.1f}%",
                 "",
                 "",
                 "",
                 "",
                 "",
+                "",
             )
-
-        self.mount(table)
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""

@@ -8,7 +8,7 @@ from typing import Optional
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import Static, TabbedContent, TabPane
+from textual.widgets import Input, Static, TabbedContent, TabPane
 
 from dbxtop.api.cache import DataCache
 from dbxtop.api.client import DatabricksClient
@@ -68,6 +68,34 @@ class AuthErrorScreen(ModalScreen[None]):
 
     def action_quit_app(self) -> None:
         self.app.exit()
+
+
+class DetailScreen(ModalScreen[None]):
+    """Full-screen modal for job/stage/SQL detail views."""
+
+    BINDINGS = [Binding("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    DetailScreen {
+        align: center middle;
+    }
+    DetailScreen > Static {
+        width: 80;
+        height: auto;
+        max-height: 80%;
+        padding: 1 2;
+        border: thick $accent;
+        background: $surface;
+        overflow-y: auto;
+    }
+    """
+
+    def __init__(self, content: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._content = content
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._content)
 
 
 class HelpScreen(ModalScreen[None]):
@@ -133,6 +161,9 @@ class DbxTopApp(App[None]):
         Binding("6", "switch_tab('storage')", "Storage", show=False),
         Binding("r", "force_refresh", "Refresh"),
         Binding("s", "cycle_sort", "Sort", show=False),
+        Binding("slash", "activate_filter", "Filter", show=False),
+        Binding("escape", "clear_filter", "Clear filter", show=False),
+        Binding("enter", "show_detail", "Detail", show=False),
         Binding("question_mark", "toggle_help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -185,6 +216,10 @@ class DbxTopApp(App[None]):
                 yield SQLView()
             with TabPane("Storage", id="storage"):
                 yield StorageView()
+
+        filter_input = Input(placeholder="Filter...", id="filter-input")
+        filter_input.display = False
+        yield filter_input
 
         self._footer = KeyboardFooter()
         yield self._footer
@@ -241,14 +276,13 @@ class DbxTopApp(App[None]):
         try:
             workspace_url = await self._dbx_client.get_workspace_url()
             org_id = await self._dbx_client.get_org_id()
-            token = self._dbx_client.get_token()
 
             self._spark_client = SparkRESTClient(
                 workspace_url=workspace_url,
                 cluster_id=self._settings.cluster_id,
                 org_id=org_id,
                 port=self._settings.spark_port,
-                token=token,
+                token_provider=self._dbx_client.get_token,
                 timeout=self._settings.request_timeout_s,
             )
             await self._spark_client.discover_app_id()
@@ -293,8 +327,8 @@ class DbxTopApp(App[None]):
         # Update rate limit / connection status in footer
         self._update_footer_status()
 
-        # Forward to active view
-        self._forward_to_active_view()
+        # Forward to active view (only if relevant slots changed)
+        self._forward_to_active_view(event.updated_slots)
 
     def _handle_cluster_state_change(self) -> None:
         """Update Spark availability based on cluster state."""
@@ -336,12 +370,37 @@ class DbxTopApp(App[None]):
         # Check rate limiting
         if self._spark_client and self._spark_client.is_rate_limited:
             self._footer.spark_connected = False
-        # Check if we're in SDK-only mode
+            self._footer.sdk_only = False
+        # Check if we're in SDK-only mode (cluster running but no Spark client)
         elif self._spark_client is None:
             self._footer.spark_connected = False
+            cluster_slot = self._cache.get("cluster") if self._cache else None
+            cluster_running = (
+                cluster_slot is not None
+                and cluster_slot.data is not None
+                and cluster_slot.data.state == ClusterState.RUNNING
+            )
+            self._footer.sdk_only = cluster_running
+        else:
+            self._footer.sdk_only = False
 
-    def _forward_to_active_view(self) -> None:
-        """Forward cache data to the currently active view."""
+    # Map view types to the cache slots they care about
+    _VIEW_SLOTS: dict[type, set[str]] = {
+        ClusterView: {"cluster", "events", "libraries"},
+        JobsView: {"spark_jobs"},
+        StagesView: {"stages"},
+        ExecutorsView: {"executors"},
+        SQLView: {"sql_queries"},
+        StorageView: {"storage"},
+    }
+
+    def _forward_to_active_view(self, updated_slots: Optional[set[str]] = None) -> None:
+        """Forward cache data to the currently active view.
+
+        Args:
+            updated_slots: If provided, only refresh when the view's
+                relevant slots intersect with the updated ones.
+        """
         if self._cache is None:
             return
         try:
@@ -349,10 +408,14 @@ class DbxTopApp(App[None]):
             active_pane = tabbed.get_pane(tabbed.active)
             for child in active_pane.walk_children():
                 if isinstance(child, BaseView):
+                    if updated_slots is not None:
+                        relevant = self._VIEW_SLOTS.get(type(child), set())
+                        if relevant and not relevant.intersection(updated_slots):
+                            return
                     child.refresh_data(self._cache)
                     break
         except Exception:
-            pass
+            logger.debug("Could not forward data to active view", exc_info=True)
 
     # -- actions -------------------------------------------------------------
 
@@ -384,7 +447,66 @@ class DbxTopApp(App[None]):
                         child.refresh_data(self._cache)
                     break
         except Exception:
+            logger.debug("Could not cycle sort on active view", exc_info=True)
+
+    def action_show_detail(self) -> None:
+        """Show detail popup for the selected row in the active view."""
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if hasattr(child, "get_selected_detail") and self._cache is not None:
+                    detail = child.get_selected_detail(self._cache)
+                    if detail:
+                        self.push_screen(DetailScreen(detail))
+                    break
+        except Exception:
+            logger.debug("Could not show detail for selected row", exc_info=True)
+
+    def action_activate_filter(self) -> None:
+        """Show the filter input and focus it."""
+        try:
+            filter_input = self.query_one("#filter-input", Input)
+            filter_input.display = True
+            filter_input.focus()
+        except Exception:
             pass
+
+    def action_clear_filter(self) -> None:
+        """Clear filter text and hide the input."""
+        try:
+            filter_input = self.query_one("#filter-input", Input)
+            filter_input.value = ""
+            filter_input.display = False
+        except Exception:
+            pass
+        # Clear filter on active view
+        self._apply_filter_to_active_view("")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Apply filter when Enter is pressed in the filter input."""
+        if event.input.id == "filter-input":
+            self._apply_filter_to_active_view(event.value)
+            event.input.display = False
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Apply filter as user types."""
+        if event.input.id == "filter-input":
+            self._apply_filter_to_active_view(event.value)
+
+    def _apply_filter_to_active_view(self, text: str) -> None:
+        """Set filter text on the active view and refresh."""
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if isinstance(child, BaseView):
+                    child.apply_filter(text)
+                    if self._cache is not None:
+                        child.refresh_data(self._cache)
+                    break
+        except Exception:
+            logger.debug("Could not apply filter to active view", exc_info=True)
 
     def action_toggle_help(self) -> None:
         """Show or dismiss the help overlay."""

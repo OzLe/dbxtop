@@ -71,7 +71,10 @@ class MetricsPoller:
         self._fast_timer: Optional[Timer] = None
         self._slow_timer: Optional[Timer] = None
         self._error_counts: dict[str, int] = {}
+        self._poll_cycle: int = 0
         self._previous_state: Optional[ClusterState] = None
+        self._previous_spark_context_id: str = ""
+        self._poll_lock = asyncio.Lock()
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -91,12 +94,19 @@ class MetricsPoller:
         if self._spark is not None:
             await self._spark.close()
 
-    def set_spark_client(self, client: SparkRESTClient) -> None:
+    async def set_spark_client(self, client: SparkRESTClient) -> None:
         """Attach or replace the Spark REST client at runtime.
+
+        Closes the previous client (if any) before replacing it.
 
         Args:
             client: A newly initialised ``SparkRESTClient``.
         """
+        if self._spark is not None:
+            try:
+                await self._spark.close()
+            except Exception:
+                logger.debug("Error closing old Spark client", exc_info=True)
         self._spark = client
 
     async def force_refresh(self) -> None:
@@ -107,6 +117,14 @@ class MetricsPoller:
 
     async def _fast_poll(self) -> None:
         """Poll high-frequency Spark data."""
+        if self._poll_lock.locked():
+            return
+        async with self._poll_lock:
+            await self._fast_poll_inner()
+
+    async def _fast_poll_inner(self) -> None:
+        """Inner fast poll logic (called under lock)."""
+        self._poll_cycle += 1
         if self._spark is None or not await self._spark.is_available():
             return
 
@@ -135,6 +153,13 @@ class MetricsPoller:
 
     async def _slow_poll(self) -> None:
         """Poll low-frequency SDK and Spark data."""
+        if self._poll_lock.locked():
+            return
+        async with self._poll_lock:
+            await self._slow_poll_inner()
+
+    async def _slow_poll_inner(self) -> None:
+        """Inner slow poll logic (called under lock)."""
         updated: Set[str] = set()
 
         # SDK calls (always available)
@@ -155,12 +180,22 @@ class MetricsPoller:
                 self._reset_backoff(slot_name)
                 updated.add(slot_name)
 
-        # Detect cluster state transitions
+        # Detect cluster state transitions and spark context changes
         cluster_slot = self._cache.get("cluster")
         if cluster_slot.data is not None:
             current_state = cluster_slot.data.state
             self._handle_state_transition(current_state)
             self._previous_state = current_state
+
+            # Detect spark_context_id change (driver restart within RUNNING)
+            ctx_id = cluster_slot.data.spark_context_id
+            if ctx_id and self._previous_spark_context_id and ctx_id != self._previous_spark_context_id:
+                logger.info("Spark context ID changed (%s → %s) — re-discovering app", self._previous_spark_context_id, ctx_id)
+                if self._spark is not None:
+                    self._spark._app_id = None  # noqa: SLF001
+                    self._app.call_later(self._try_spark_reconnect)
+            if ctx_id:
+                self._previous_spark_context_id = ctx_id
 
         # Spark REST calls (only when available)
         if self._spark is not None and await self._spark.is_available():
@@ -193,6 +228,18 @@ class MetricsPoller:
     def _reset_backoff(self, slot_name: str) -> None:
         """Clear the backoff counter for a slot after a successful poll."""
         self._error_counts.pop(slot_name, None)
+
+    def _should_skip(self, slot_name: str) -> bool:
+        """Return True if the slot should be skipped due to error backoff.
+
+        Slots with consecutive errors are polled less often: every 2^N cycles
+        (up to MAX_BACKOFF_MULTIPLIER).
+        """
+        count = self._error_counts.get(slot_name, 0)
+        if count == 0:
+            return False
+        skip_interval = min(2**count, 2**MAX_BACKOFF_MULTIPLIER)
+        return (self._poll_cycle % skip_interval) != 0
 
     # -- cluster state transitions -------------------------------------------
 

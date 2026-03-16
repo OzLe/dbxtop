@@ -21,7 +21,7 @@ def render_progress(completed: int, total: int, failed: int = 0, width: int = 20
     """
     if total <= 0:
         bar = " " * width
-        return f"[{bar}] 0/0"
+        return f"\\[{bar}] 0/0"
 
     ok_ratio = min(completed / total, 1.0)
     fail_ratio = min(failed / total, 1.0) if failed else 0.0
@@ -42,7 +42,7 @@ def render_progress(completed: int, total: int, failed: int = 0, width: int = 20
     bar = ok_segment + fail_segment + empty_segment
 
     count_str = f"{completed}/{total}"
-    return f"[{bar}] {count_str}"
+    return f"\\[{bar}] {count_str}"
 
 
 def render_progress_rich(completed: int, total: int, failed: int = 0, width: int = 20) -> str:
