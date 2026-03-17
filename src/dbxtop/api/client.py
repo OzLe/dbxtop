@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
+from databricks.sdk.errors import NotFound, PermissionDenied, Unauthenticated
 from databricks.sdk.service.compute import (
     ClusterDetails,
     ClusterEvent as SdkClusterEvent,
@@ -182,7 +182,7 @@ class DatabricksClient:
         try:
             import httpx
 
-            headers = self._workspace.config.authenticate()
+            headers = await asyncio.to_thread(self._workspace.config.authenticate)
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as http:
                 resp = await http.get(
                     f"{host.rstrip('/')}/api/2.0/workspace/get-status",
@@ -199,24 +199,30 @@ class DatabricksClient:
         self._org_id = ""
         return self._org_id
 
-    def get_token(self) -> str:
-        """Return the current authentication token (synchronous).
+    async def get_token(self) -> str:
+        """Return the current authentication token.
 
         Supports both PAT tokens and OAuth (via ``authenticate()`` headers).
         Used by ``SparkRESTClient`` for bearer-token auth.
+
+        The ``authenticate()`` call is wrapped in ``asyncio.to_thread()``
+        because the SDK may perform network I/O (e.g. OAuth token refresh).
+
+        Raises:
+            AuthenticationError: If no token can be obtained.
         """
-        # Try direct token first (PAT)
+        # Try direct token first (PAT) — config.token is a simple property read
         if self._workspace.config.token:
             return self._workspace.config.token
         # Fall back to authenticate() which handles OAuth/U2M/etc.
         try:
-            headers = self._workspace.config.authenticate()
+            headers = await asyncio.to_thread(self._workspace.config.authenticate)
             auth_header = headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 return auth_header[7:]
-        except Exception:
-            logger.warning("Token retrieval via authenticate() failed", exc_info=True)
-        return ""
+        except Exception as exc:
+            raise AuthenticationError(f"Token retrieval failed for profile '{self._profile}': {exc}") from exc
+        raise AuthenticationError(f"No valid token available for profile '{self._profile}'")
 
     async def keepalive_ping(self) -> bool:
         """Send a lightweight command to keep the cluster alive.
@@ -277,15 +283,10 @@ class DatabricksClient:
             return await asyncio.to_thread(func, *args, **kwargs)
         except NotFound as exc:
             raise ClusterNotFoundError(f"Cluster {self._cluster_id} not found: {exc}") from exc
+        except (Unauthenticated, PermissionDenied) as exc:
+            raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
         except Exception as exc:
-            # Check for specific SDK auth exceptions first
-            exc_type_name = type(exc).__name__
-            if exc_type_name in ("Unauthenticated", "PermissionDenied"):
-                raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
-            # Fallback: check error message for auth indicators
             msg = str(exc).lower()
-            if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
-                raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
             if "timeout" in msg or "connect" in msg:
                 raise DatabricksConnectionError(f"Could not reach Databricks workspace: {exc}") from exc
             raise

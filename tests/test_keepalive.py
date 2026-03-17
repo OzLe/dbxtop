@@ -529,13 +529,9 @@ class TestAppHandlesKeepAliveUpdated:
         msg = KeepAliveUpdated(active=True, last_success=None, failed=False)
         handler(msg)
 
-        # The handler should set keepalive-related properties on the footer
-        assert (
-            hasattr(mock_footer, "keepalive_active")
-            or mock_footer.keepalive_active is not None
-            or len(mock_footer.method_calls) > 0
-            or len(mock_footer.mock_calls) > 0
-        ), "on_keep_alive_updated did not update the footer"
+        # The handler should set keepalive properties on the footer
+        assert mock_footer.keepalive_active is True, "keepalive_active should be set to True"
+        assert mock_footer.keepalive_failed is False, "keepalive_failed should be set to False"
 
 
 class TestSettingsFromCliKeepAlive:

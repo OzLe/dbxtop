@@ -79,6 +79,7 @@ class StagesView(BaseView):
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render stages table from cache."""
         slot = cache.get("stages")
+        self.update_stale_status(slot, "stages-table")
         stages: Optional[List[SparkStage]] = slot.data
         if stages is None:
             return

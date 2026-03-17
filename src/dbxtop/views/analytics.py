@@ -164,13 +164,17 @@ class AnalyticsView(BaseView):
                 return
         self._last_refresh = now
 
-        # Run the analytics engine (positional args match engine signature)
+        storage = cache.get("storage").data
+
+        # Run the analytics engine (all args match engine signature)
         report = self._engine.analyze(
             executors,
             stages,
             jobs,
             sql_queries,
             cluster,
+            storage=storage,
+            cache=cache,
         )
 
         if report is None:

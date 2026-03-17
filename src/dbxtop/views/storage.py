@@ -55,6 +55,7 @@ class StorageView(BaseView):
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render storage table from cache."""
         slot = cache.get("storage")
+        self.update_stale_status(slot, "storage-table")
         rdds: Optional[List[RDDInfo]] = slot.data
         if rdds is None:
             return

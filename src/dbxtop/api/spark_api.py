@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 import httpx
 
@@ -52,7 +52,7 @@ class SparkRESTClient:
         org_id: str,
         port: int = 40001,
         token: Optional[str] = None,
-        token_provider: Optional[Callable[[], str]] = None,
+        token_provider: Optional[Union[Callable[[], str], Callable[[], Awaitable[str]]]] = None,
         timeout: float = 10.0,
     ) -> None:
         self._workspace_url = workspace_url.rstrip("/")
@@ -75,6 +75,24 @@ class SparkRESTClient:
             headers=headers,
             follow_redirects=True,
         )
+
+    async def _resolve_token(self) -> Optional[str]:
+        """Resolve the token from the provider, handling both sync and async callables.
+
+        Returns:
+            The bearer token string, or ``None`` if no provider is configured
+            or if token retrieval fails (logged as warning).
+        """
+        if not self._token_provider:
+            return None
+        try:
+            result = self._token_provider()
+            if hasattr(result, "__await__"):
+                return await result  # type: ignore[misc]
+            return result  # type: ignore[return-value]
+        except Exception:
+            logger.warning("Token provider failed — request will be unauthenticated", exc_info=True)
+            return None
 
     # -- URL construction ----------------------------------------------------
 
@@ -103,8 +121,9 @@ class SparkRESTClient:
         url = f"{self._base_url}/api/v1/applications"
         try:
             headers: Optional[Dict[str, str]] = None
-            if self._token_provider:
-                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            token = await self._resolve_token()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(url, headers=headers)
             resp.raise_for_status()
             apps = resp.json()
@@ -130,8 +149,9 @@ class SparkRESTClient:
             return False
         try:
             headers: Optional[Dict[str, str]] = None
-            if self._token_provider:
-                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            token = await self._resolve_token()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(f"{self._base_url}/api/v1/applications", headers=headers)
             self._available = resp.is_success
             return self._available
@@ -242,14 +262,19 @@ class SparkRESTClient:
             return None
 
         # Honour rate-limit backoff (skip request until cooldown expires)
-        if self._rate_limit_until > 0 and time.monotonic() < self._rate_limit_until:
-            return None
+        if self._rate_limit_until > 0:
+            if time.monotonic() < self._rate_limit_until:
+                return None
+            # Backoff expired — clear the flag so the footer updates
+            self._rate_limited = False
+            self._rate_limit_until = 0.0
 
         url = self._app_url(endpoint)
         try:
             headers: Optional[Dict[str, str]] = None
-            if self._token_provider:
-                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            token = await self._resolve_token()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(url, params=params, headers=headers)
 
             # Rate limit handling
@@ -277,16 +302,15 @@ class SparkRESTClient:
                     return None
             resp.raise_for_status()
             return resp.json()
-        except httpx.TimeoutException:
-            logger.warning("Timeout fetching %s", endpoint)
-            return None
-        except httpx.ConnectError:
-            logger.warning("Connection error fetching %s", endpoint)
-            self._available = False
-            return None
         except httpx.HTTPStatusError as exc:
             logger.warning("HTTP %d on %s: %s", exc.response.status_code, endpoint, exc)
             if exc.response.status_code == 404:
+                self._available = False
+            return None
+        except httpx.TransportError as exc:
+            # Covers TimeoutException, ConnectError, ReadError, WriteError, etc.
+            logger.warning("Transport error fetching %s: %s", endpoint, exc)
+            if isinstance(exc, httpx.ConnectError):
                 self._available = False
             return None
 
