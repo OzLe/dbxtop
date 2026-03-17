@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static, TabbedContent, TabPane
 
-from dbxtop.analytics.run_manager import RunManager
 from dbxtop.api.cache import DataCache
+
+if TYPE_CHECKING:
+    from dbxtop.analytics.run_manager import RunManager
 from dbxtop.api.client import DatabricksClient
 from dbxtop.api.models import ClusterState
 from dbxtop.api.poller import DataUpdated, KeepAliveUpdated, MetricsPoller
@@ -627,6 +629,8 @@ class DbxTopApp(App[None]):
             return
 
         if self._run_manager is None:
+            from dbxtop.analytics.run_manager import RunManager
+
             self._run_manager = RunManager(self._cluster_id)
 
         # Capture Spark config snapshot from the cluster cache slot
