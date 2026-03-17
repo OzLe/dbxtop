@@ -64,9 +64,10 @@ class AnalyticsView(BaseView):
     }
 
     .health-panel {
-        width: 30;
+        width: 36;
         height: 100%;
         padding: 0 1;
+        border-right: solid $accent;
     }
 
     .issues-panel {
@@ -77,9 +78,10 @@ class AnalyticsView(BaseView):
     }
 
     .efficiency-panel {
-        width: 40;
+        width: 36;
         height: 100%;
         padding: 0 1;
+        border-right: solid $accent;
     }
 
     .recommendations-panel {
