@@ -97,7 +97,14 @@ class ExecutorsView(BaseView):
         for snapshot in cache.get_history("executors"):
             if isinstance(snapshot, list):
                 for e in snapshot:
-                    mem_history.setdefault(e.executor_id, []).append(e.memory_used_pct)
+                    # Use peak JVM heap % when available, fall back to storage %
+                    jvm_used = e.peak_jvm_heap + e.peak_jvm_off_heap
+                    if jvm_used > 0 and e.max_memory > 0:
+                        estimated_max = max(int(e.max_memory / 0.3), jvm_used)
+                        mem_pct = (jvm_used / estimated_max) * 100.0
+                    else:
+                        mem_pct = e.memory_used_pct
+                    mem_history.setdefault(e.executor_id, []).append(mem_pct)
                     gc_history.setdefault(e.executor_id, []).append(e.gc_ratio * 100)
 
         rows = self._build_rows(executors)
@@ -148,11 +155,16 @@ class ExecutorsView(BaseView):
         if executors:
             total_cores = sum(e.total_cores for e in executors)
             total_active = sum(e.active_tasks for e in executors)
-            total_mem_used = sum(e.memory_used for e in executors)
-            total_mem_max = sum(e.max_memory for e in executors)
+            total_jvm = sum(e.peak_jvm_heap + e.peak_jvm_off_heap for e in executors)
+            total_stor_max = sum(e.max_memory for e in executors)
             avg_gc = sum(e.gc_ratio for e in executors) / len(executors) * 100
 
-            mem_summary = f"{format_bytes(total_mem_used)}/{format_bytes(total_mem_max)}"
+            if total_jvm > 0:
+                estimated_max = max(int(total_stor_max / 0.3), total_jvm)
+                mem_summary = f"{format_bytes(total_jvm)}/{format_bytes(estimated_max)}"
+            else:
+                total_mem_used = sum(e.memory_used for e in executors)
+                mem_summary = f"{format_bytes(total_mem_used)}/{format_bytes(total_stor_max)}"
             table.add_row(
                 "[bold]TOTAL[/bold]",
                 "",
@@ -200,8 +212,22 @@ class ExecutorsView(BaseView):
             # Failed tasks
             failed_display = f"[red]{exe.failed_tasks}[/red]" if exe.failed_tasks > 0 else "0"
 
-            # Memory bar
-            if exe.max_memory > 0:
+            # Memory: prefer peak JVM heap (always populated) over storage
+            # memory (only non-zero when RDDs/DataFrames are cached).
+            jvm_used = exe.peak_jvm_heap + exe.peak_jvm_off_heap
+            if jvm_used > 0 and exe.max_memory > 0:
+                # Estimate total JVM heap from storage max.
+                # Default Spark config: storage ≈ 30% of JVM heap.
+                estimated_jvm_max = max(int(exe.max_memory / 0.3), jvm_used)
+                used_gb = jvm_used / (1024**3)
+                max_gb = estimated_jvm_max / (1024**3)
+                pct = (jvm_used / estimated_jvm_max) * 100.0
+                bar_width = 10
+                filled = int(pct / 100 * bar_width)
+                bar = "=" * filled + " " * (bar_width - filled)
+                memory_display = f"\\[{bar}] {used_gb:.1f}/{max_gb:.1f}G"
+            elif exe.memory_used > 0 and exe.max_memory > 0:
+                # Fallback: show storage memory when RDDs are cached
                 used_gb = exe.memory_used / (1024**3)
                 max_gb = exe.max_memory / (1024**3)
                 pct = exe.memory_used_pct
