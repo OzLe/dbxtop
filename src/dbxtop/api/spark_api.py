@@ -302,16 +302,15 @@ class SparkRESTClient:
                     return None
             resp.raise_for_status()
             return resp.json()
-        except httpx.TimeoutException:
-            logger.warning("Timeout fetching %s", endpoint)
-            return None
-        except httpx.ConnectError:
-            logger.warning("Connection error fetching %s", endpoint)
-            self._available = False
-            return None
         except httpx.HTTPStatusError as exc:
             logger.warning("HTTP %d on %s: %s", exc.response.status_code, endpoint, exc)
             if exc.response.status_code == 404:
+                self._available = False
+            return None
+        except httpx.TransportError as exc:
+            # Covers TimeoutException, ConnectError, ReadError, WriteError, etc.
+            logger.warning("Transport error fetching %s: %s", endpoint, exc)
+            if isinstance(exc, httpx.ConnectError):
                 self._available = False
             return None
 

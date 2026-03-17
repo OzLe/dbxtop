@@ -127,6 +127,25 @@ class BaseView(Widget):
         lower = text.lower()
         return [r for r in rows if any(lower in str(r.get(k, "")).lower() for k in search_keys)]
 
+    def update_stale_status(self, slot: CacheSlot[Any], table_id: str) -> None:
+        """Show or hide a stale-data warning on a table.
+
+        Sets the table's ``border_subtitle`` to the stale indicator text,
+        or clears it if data is fresh.
+
+        Args:
+            slot: The cache slot to check for staleness.
+            table_id: CSS ID of the DataTable widget (e.g. ``'#jobs-table'``).
+        """
+        indicator = self.render_stale_indicator(slot)
+        try:
+            from textual.widgets import DataTable
+
+            table = self.query_one(f"#{table_id}", DataTable)
+            table.border_subtitle = indicator
+        except Exception:
+            pass
+
     # -- stale indicator -----------------------------------------------------
 
     @staticmethod
