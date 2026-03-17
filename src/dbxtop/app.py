@@ -22,6 +22,7 @@ from dbxtop.views.executors import ExecutorsView
 from dbxtop.views.jobs import JobsView
 from dbxtop.views.sql import SQLView
 from dbxtop.views.stages import StagesView
+from dbxtop.views.analytics import AnalyticsView
 from dbxtop.views.storage import StorageView
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
@@ -124,7 +125,7 @@ class HelpScreen(ModalScreen[None]):
         help_text = (
             "[bold]dbxtop Keyboard Shortcuts[/bold]\n\n"
             "[bold]Navigation[/bold]\n"
-            "  1-6        Switch between views\n"
+            "  1-7        Switch between views\n"
             "  Tab        Next tab\n"
             "  Shift+Tab  Previous tab\n\n"
             "[bold]Data Controls[/bold]\n"
@@ -159,6 +160,7 @@ class DbxTopApp(App[None]):
         Binding("4", "switch_tab('executors')", "Executors", show=False),
         Binding("5", "switch_tab('sql')", "SQL", show=False),
         Binding("6", "switch_tab('storage')", "Storage", show=False),
+        Binding("7", "switch_tab('analytics')", "Analytics", show=False),
         Binding("r", "force_refresh", "Refresh"),
         Binding("s", "cycle_sort", "Sort", show=False),
         Binding("slash", "activate_filter", "Filter", show=False),
@@ -220,6 +222,8 @@ class DbxTopApp(App[None]):
                 yield SQLView()
             with TabPane("Storage", id="storage"):
                 yield StorageView()
+            with TabPane("Analytics", id="analytics"):
+                yield AnalyticsView()
 
         filter_input = Input(placeholder="Filter...", id="filter-input")
         filter_input.display = False
@@ -413,6 +417,7 @@ class DbxTopApp(App[None]):
         ExecutorsView: {"executors"},
         SQLView: {"sql_queries"},
         StorageView: {"storage"},
+        AnalyticsView: {"executors", "stages", "spark_jobs", "sql_queries", "cluster"},
     }
 
     def _forward_to_active_view(self, updated_slots: Optional[set[str]] = None) -> None:

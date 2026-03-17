@@ -110,3 +110,63 @@ DataTable > .datatable--hover {
     content-align: center middle;
     color: red;
 }
+
+/* -- Analytics view --------------------------------------------------- */
+
+.analytics-placeholder {
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: $text-muted;
+    text-style: italic;
+}
+
+.analytics-top-row {
+    height: 12;
+    layout: horizontal;
+}
+
+.analytics-bottom-row {
+    height: 1fr;
+    layout: horizontal;
+    min-height: 8;
+}
+
+.health-panel {
+    width: 30;
+    height: 100%;
+    padding: 0 1;
+    border-right: solid $accent;
+}
+
+.issues-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+.efficiency-panel {
+    width: 40;
+    height: 100%;
+    padding: 0 1;
+    border-right: solid $accent;
+}
+
+.recommendations-panel {
+    width: 1fr;
+    height: 100%;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+.panel-title {
+    text-style: bold underline;
+    margin-bottom: 1;
+}
+
+.health-excellent { color: green; }
+.health-good { color: dodgerblue; }
+.health-fair { color: yellow; }
+.health-poor { color: orange; }
+.health-critical { color: red; }

@@ -17,7 +17,7 @@ from dbxtop.api.cache import CacheSlot, DataCache
 
 
 class BaseView(Widget):
-    """Abstract base that all six dashboard views extend.
+    """Abstract base that all seven dashboard views extend.
 
     Provides sorting, text filtering, stale-data rendering,
     and a generic DataTable builder.
