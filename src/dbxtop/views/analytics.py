@@ -282,8 +282,8 @@ class AnalyticsView(BaseView):
         """
         lines = ["[bold]TOP ISSUES[/bold]", ""]
 
-        active = [a for a in accumulated if a.is_active]
-        resolved = [a for a in accumulated if not a.is_active]
+        active = [a for a in accumulated if not a.is_resolved]
+        resolved = [a for a in accumulated if a.is_resolved]
 
         if not active and not resolved:
             lines.append("  [green]No issues detected[/green]")
