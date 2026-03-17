@@ -7,6 +7,7 @@ to retrieve jobs, stages, executors, SQL queries, and storage data.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
@@ -62,6 +63,7 @@ class SparkRESTClient:
         self._available = False
         self._rate_limit_backoff: float = 0.0
         self._rate_limited: bool = False
+        self._rate_limit_until: float = 0.0
         self._token_provider = token_provider
 
         headers: Dict[str, str] = {}
@@ -239,11 +241,9 @@ class SparkRESTClient:
             logger.warning("No Spark app_id — call discover_app_id() first")
             return None
 
-        # Honour rate-limit backoff
-        if self._rate_limit_backoff > 0:
-            import asyncio
-
-            await asyncio.sleep(self._rate_limit_backoff)
+        # Honour rate-limit backoff (skip request until cooldown expires)
+        if self._rate_limit_until > 0 and time.monotonic() < self._rate_limit_until:
+            return None
 
         url = self._app_url(endpoint)
         try:
@@ -256,20 +256,22 @@ class SparkRESTClient:
             if resp.status_code == 429:
                 self._rate_limit_backoff = min((self._rate_limit_backoff or 1.0) * 2, 30.0)
                 self._rate_limited = True
+                self._rate_limit_until = time.monotonic() + self._rate_limit_backoff
                 logger.warning("Rate limited on %s — backing off %.1fs", endpoint, self._rate_limit_backoff)
                 return None
 
-            # Reset rate limit on success
-            if self._rate_limit_backoff > 0:
+            # Reset rate limit only on successful responses
+            if self._rate_limit_backoff > 0 and resp.is_success:
                 self._rate_limit_backoff = 0.0
                 self._rate_limited = False
+                self._rate_limit_until = 0.0
 
             if resp.status_code == 404 and self._available:
                 logger.info("Got 404 — attempting app_id re-discovery")
                 try:
                     await self.discover_app_id()
                     url = self._app_url(endpoint)
-                    resp = await self._client.get(url, params=params)
+                    resp = await self._client.get(url, params=params, headers=headers)
                 except RuntimeError:
                     self._available = False
                     return None

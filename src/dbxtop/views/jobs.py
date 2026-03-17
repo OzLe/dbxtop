@@ -27,7 +27,7 @@ _SORT_KEYS = (
     "status",
     "num_completed_tasks",
     "num_completed_stages",
-    "submission_time",
+    "elapsed_ms",
     "submission_time",
 )
 
@@ -182,6 +182,7 @@ class JobsView(BaseView):
                 elapsed_ms = int((now - job.submission_time).total_seconds() * 1000)
                 duration = format_duration(elapsed_ms)
             else:
+                elapsed_ms = 0
                 duration = "--"
 
             submitted = format_timestamp(job.submission_time)
@@ -203,6 +204,7 @@ class JobsView(BaseView):
                     "submitted": submitted,
                     "num_completed_tasks": job.num_completed_tasks,
                     "num_completed_stages": job.num_completed_stages,
+                    "elapsed_ms": elapsed_ms,
                     "submission_time": job.submission_time,
                 }
             )
