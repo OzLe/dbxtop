@@ -1,4 +1,5 @@
 """CLI smoke tests for dbxtop."""
+
 from dbxtop.cli import main
 
 

@@ -109,8 +109,14 @@ class ExecutorsView(BaseView):
         active = [r for r in rows if not r["is_driver"] and r["is_active"]]
         dead = [r for r in rows if not r["is_driver"] and not r["is_active"]]
 
-        active.sort(key=lambda r: r.get(self.current_sort_key, ""), reverse=self.sort_reverse)
-        dead.sort(key=lambda r: r.get(self.current_sort_key, ""), reverse=self.sort_reverse)
+        def _sort_key(r: dict[str, Any]) -> tuple[int, Any]:
+            val = r.get(self.current_sort_key)
+            if val is None:
+                return (0, "")  # tuple ensures consistent comparison
+            return (1, val)
+
+        active.sort(key=_sort_key, reverse=self.sort_reverse)
+        dead.sort(key=_sort_key, reverse=self.sort_reverse)
         sorted_rows = driver + active + dead
 
         table.clear()

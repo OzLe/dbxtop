@@ -289,8 +289,16 @@ class DbxTopApp(App[None]):
 
             self._update_spark_status(True)
             logger.info("Spark REST client initialised")
+
+            if self._poller is not None and self._spark_client is not None:
+                await self._poller.set_spark_client(self._spark_client)
         except Exception as exc:
             logger.info("Spark REST not available yet: %s", exc)
+            if self._spark_client is not None:
+                try:
+                    await self._spark_client.close()
+                except Exception:
+                    pass
             self._spark_client = None
             self._update_spark_status(False)
 
@@ -425,6 +433,14 @@ class DbxTopApp(App[None]):
         if self._footer:
             self._footer.active_tab = tab_id
         # Refresh the newly-active view with current cache data
+        if self._cache:
+            self._forward_to_active_view()
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Handle tab clicks — sync footer and refresh the newly active view."""
+        tab_id = event.pane.id or ""
+        if self._footer:
+            self._footer.active_tab = tab_id
         if self._cache:
             self._forward_to_active_view()
 

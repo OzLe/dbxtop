@@ -111,7 +111,8 @@ class MetricsPoller:
 
     async def force_refresh(self) -> None:
         """Trigger an immediate fast *and* slow poll."""
-        await asyncio.gather(self._fast_poll(), self._slow_poll())
+        await self._fast_poll()
+        await self._slow_poll()
 
     # -- fast poll (executors, jobs, stages) ---------------------------------
 
@@ -130,15 +131,27 @@ class MetricsPoller:
 
         updated: Set[str] = set()
 
-        results = await asyncio.gather(
-            self._spark.get_executors(),
-            self._spark.get_jobs(),
-            self._spark.get_stages(),
-            return_exceptions=True,
+        all_slots = ("executors", "spark_jobs", "stages")
+        all_coros = (
+            self._spark.get_executors,
+            self._spark.get_jobs,
+            self._spark.get_stages,
         )
+        active_slots = []
+        active_coros = []
+        for slot_name, coro_fn in zip(all_slots, all_coros):
+            if self._should_skip(slot_name):
+                logger.debug("Skipping %s due to error backoff", slot_name)
+            else:
+                active_slots.append(slot_name)
+                active_coros.append(coro_fn())
 
-        slot_names = ("executors", "spark_jobs", "stages")
-        for slot_name, result in zip(slot_names, results):
+        if not active_coros:
+            return
+
+        results = await asyncio.gather(*active_coros, return_exceptions=True)
+
+        for slot_name, result in zip(active_slots, results):
             if isinstance(result, BaseException):
                 self._handle_error(slot_name, result)
             else:
@@ -163,22 +176,31 @@ class MetricsPoller:
         updated: Set[str] = set()
 
         # SDK calls (always available)
-        sdk_results = await asyncio.gather(
-            self._dbx.get_cluster(),
-            self._dbx.get_events(),
-            self._dbx.get_job_runs(),
-            self._dbx.get_library_status(),
-            return_exceptions=True,
+        all_sdk_slots = ("cluster", "events", "job_runs", "libraries")
+        all_sdk_fns = (
+            self._dbx.get_cluster,
+            self._dbx.get_events,
+            self._dbx.get_job_runs,
+            self._dbx.get_library_status,
         )
-
-        sdk_slots = ("cluster", "events", "job_runs", "libraries")
-        for slot_name, result in zip(sdk_slots, sdk_results):
-            if isinstance(result, BaseException):
-                self._handle_error(slot_name, result)
+        active_sdk_slots = []
+        active_sdk_coros = []
+        for slot_name, fn in zip(all_sdk_slots, all_sdk_fns):
+            if self._should_skip(slot_name):
+                logger.debug("Skipping %s due to error backoff", slot_name)
             else:
-                self._cache.update(slot_name, result)
-                self._reset_backoff(slot_name)
-                updated.add(slot_name)
+                active_sdk_slots.append(slot_name)
+                active_sdk_coros.append(fn())
+
+        if active_sdk_coros:
+            sdk_results = await asyncio.gather(*active_sdk_coros, return_exceptions=True)
+            for slot_name, result in zip(active_sdk_slots, sdk_results):
+                if isinstance(result, BaseException):
+                    self._handle_error(slot_name, result)
+                else:
+                    self._cache.update(slot_name, result)
+                    self._reset_backoff(slot_name)
+                    updated.add(slot_name)
 
         # Detect cluster state transitions and spark context changes
         cluster_slot = self._cache.get("cluster")
@@ -190,7 +212,9 @@ class MetricsPoller:
             # Detect spark_context_id change (driver restart within RUNNING)
             ctx_id = cluster_slot.data.spark_context_id
             if ctx_id and self._previous_spark_context_id and ctx_id != self._previous_spark_context_id:
-                logger.info("Spark context ID changed (%s → %s) — re-discovering app", self._previous_spark_context_id, ctx_id)
+                logger.info(
+                    "Spark context ID changed (%s → %s) — re-discovering app", self._previous_spark_context_id, ctx_id
+                )
                 if self._spark is not None:
                     self._spark._app_id = None  # noqa: SLF001
                     self._app.call_later(self._try_spark_reconnect)
@@ -199,19 +223,26 @@ class MetricsPoller:
 
         # Spark REST calls (only when available)
         if self._spark is not None and await self._spark.is_available():
-            spark_results = await asyncio.gather(
-                self._spark.get_sql(),
-                self._spark.get_storage(),
-                return_exceptions=True,
-            )
-            spark_slots = ("sql_queries", "storage")
-            for slot_name, result in zip(spark_slots, spark_results):
-                if isinstance(result, BaseException):
-                    self._handle_error(slot_name, result)
+            all_spark_slots = ("sql_queries", "storage")
+            all_spark_fns = (self._spark.get_sql, self._spark.get_storage)
+            active_spark_slots = []
+            active_spark_coros = []
+            for slot_name, fn in zip(all_spark_slots, all_spark_fns):
+                if self._should_skip(slot_name):
+                    logger.debug("Skipping %s due to error backoff", slot_name)
                 else:
-                    self._cache.update(slot_name, result)
-                    self._reset_backoff(slot_name)
-                    updated.add(slot_name)
+                    active_spark_slots.append(slot_name)
+                    active_spark_coros.append(fn())
+
+            if active_spark_coros:
+                spark_results = await asyncio.gather(*active_spark_coros, return_exceptions=True)
+                for slot_name, result in zip(active_spark_slots, spark_results):
+                    if isinstance(result, BaseException):
+                        self._handle_error(slot_name, result)
+                    else:
+                        self._cache.update(slot_name, result)
+                        self._reset_backoff(slot_name)
+                        updated.add(slot_name)
 
         if updated:
             self._app.post_message(DataUpdated(updated))
