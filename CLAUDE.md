@@ -285,12 +285,34 @@ When implementing any view or component, consult the specification document for 
 - **Constants:** `UPPER_SNAKE_CASE` (e.g., `DEFAULT_FAST_POLL_S`, `MAX_RING_BUFFER_SIZE`)
 - **Private methods:** Single underscore prefix (e.g., `_map_cluster`, `_build_proxy_url`)
 
-### Git & Branching
+### Git & Branching (Gitflow)
 
-- **Branch naming:** `feature/m{N}-{short-description}` (e.g., `feature/m1-api-models`, `feature/m3-cluster-view`)
-- **Commit style:** Imperative mood, short first line (<72 chars), optional body with details. Prefix with milestone: `M1: Add Pydantic models for all API responses`
-- **Always create feature branches** — never commit directly to `main`.
-- **PR per milestone** (or per large task within a milestone).
+The project follows a **gitflow** branching model:
+
+- **`main`** — Production-ready code. Protected: requires PR (from `develop` only), CI must pass.
+- **`develop`** — Integration branch. Protected: requires PR (from feature/fix branches), CI must pass.
+- **Feature/fix branches** — Created from `develop`, merged back to `develop` via PR.
+
+**Branch naming:**
+- Features: `feature/{ticket-or-description}` (e.g., `feature/sem2-168-markup-fix`)
+- Fixes: `fix/{ticket-or-description}` (e.g., `fix/sem2-144-executors-memory`)
+
+**Workflow:**
+1. Create feature branch from `develop`
+2. Open PR targeting `develop` — CI runs lint + tests
+3. Merge to `develop` after review
+4. When ready to release: open PR from `develop` → `main`
+5. On merge to `main`: version is auto-bumped, tagged, and a GitHub Release is created
+
+**Version bumping (automated):**
+- Default: **patch** bump (e.g., 0.2.0 → 0.2.1)
+- Add `minor` label to PR → minor bump (e.g., 0.2.0 → 0.3.0)
+- Add `major` label to PR → major bump (e.g., 0.2.0 → 1.0.0)
+- The version bump commit and tag are auto-pushed to `main` and back-merged to `develop`
+
+**Commit style:** Imperative mood, short first line (<72 chars), optional body with details.
+- **Never commit directly to `main` or `develop`.**
+- **PR per feature/fix** (or per large task within a milestone).
 
 ### Dependencies
 
