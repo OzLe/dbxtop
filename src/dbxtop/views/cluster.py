@@ -21,18 +21,11 @@ from dbxtop.api.models import (
 )
 from dbxtop.views.base import BaseView
 
-# -- state colour helpers ---------------------------------------------------
+# -- state colour helpers (derived from canonical status_indicator maps) -----
 
-_STATE_COLOURS: dict[str, str] = {
-    "RUNNING": "green",
-    "PENDING": "yellow",
-    "RESTARTING": "yellow",
-    "RESIZING": "yellow",
-    "TERMINATING": "red",
-    "TERMINATED": "red",
-    "ERROR": "red",
-    "UNKNOWN": "dim",
-}
+from dbxtop.widgets.status_indicator import CLUSTER_STATES
+
+_STATE_COLOURS: dict[str, str] = {k: v[0] for k, v in CLUSTER_STATES.items()}
 
 _EVENT_COLOURS: dict[str, str] = {
     "TERMINATING": "red",
