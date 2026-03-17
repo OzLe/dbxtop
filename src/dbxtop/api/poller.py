@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Optional, Set
 
 from textual.app import App
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 MAX_BACKOFF_MULTIPLIER: int = 4
 """Maximum backoff factor for consecutive errors on a single slot."""
 
+MAX_KEEPALIVE_FAILURES: int = 3
+"""Disable keepalive after this many consecutive failures."""
+
 
 class DataUpdated(Message):
     """Posted to the app when the cache receives fresh data.
@@ -36,6 +40,22 @@ class DataUpdated(Message):
     def __init__(self, updated_slots: Set[str]) -> None:
         super().__init__()
         self.updated_slots = updated_slots
+
+
+class KeepAliveUpdated(Message):
+    """Posted when a keepalive ping completes (success or failure).
+
+    Attributes:
+        active: Whether keepalive is currently active (not permanently failed).
+        last_success: UTC timestamp of the most recent successful ping, or ``None``.
+        failed: ``True`` when keepalive has been disabled due to repeated failures.
+    """
+
+    def __init__(self, active: bool, last_success: Optional[datetime], failed: bool) -> None:
+        super().__init__()
+        self.active = active
+        self.last_success = last_success
+        self.failed = failed
 
 
 class MetricsPoller:
@@ -70,11 +90,19 @@ class MetricsPoller:
 
         self._fast_timer: Optional[Timer] = None
         self._slow_timer: Optional[Timer] = None
+        self._keepalive_timer: Optional[Timer] = None
         self._error_counts: dict[str, int] = {}
         self._poll_cycle: int = 0
         self._previous_state: Optional[ClusterState] = None
         self._previous_spark_context_id: str = ""
         self._poll_lock = asyncio.Lock()
+
+        # Keepalive state
+        self._keepalive_enabled: bool = settings.keepalive
+        self._keepalive_failures: int = 0
+        self._last_keepalive_time: Optional[datetime] = None
+        self._keepalive_failed: bool = False
+        self._keepalive_lock = asyncio.Lock()
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -85,14 +113,25 @@ class MetricsPoller:
         # Trigger an immediate slow poll so data appears on launch
         self._app.call_later(self._slow_poll)
 
+        if self._keepalive_enabled:
+            self._keepalive_timer = self._app.set_interval(
+                self._settings.keepalive_interval_s, self._keepalive_tick, name="keepalive"
+            )
+
     async def stop(self) -> None:
         """Cancel timers and close clients."""
         if self._fast_timer is not None:
             self._fast_timer.stop()
         if self._slow_timer is not None:
             self._slow_timer.stop()
+        if self._keepalive_timer is not None:
+            self._keepalive_timer.stop()
         if self._spark is not None:
             await self._spark.close()
+        try:
+            await self._dbx.destroy_keepalive_context()
+        except Exception:
+            logger.debug("Error destroying keepalive context during stop", exc_info=True)
 
     async def set_spark_client(self, client: SparkRESTClient) -> None:
         """Attach or replace the Spark REST client at runtime.
@@ -246,6 +285,45 @@ class MetricsPoller:
 
         if updated:
             self._app.post_message(DataUpdated(updated))
+
+    # -- keepalive tier ------------------------------------------------------
+
+    async def _keepalive_tick(self) -> None:
+        """Periodic keepalive ping — gated on cluster state and failure count."""
+        # Already permanently failed — do nothing
+        if self._keepalive_failed:
+            return
+
+        # Check cluster state from cache
+        cluster_slot = self._cache.get("cluster")
+        if cluster_slot.data is None:
+            return
+        if cluster_slot.data.state != ClusterState.RUNNING:
+            return
+
+        async with self._keepalive_lock:
+            await self._keepalive_tick_inner()
+
+    async def _keepalive_tick_inner(self) -> None:
+        """Execute the keepalive ping and update counters / post messages."""
+        success = await self._dbx.keepalive_ping()
+
+        if success:
+            self._keepalive_failures = 0
+            self._last_keepalive_time = datetime.now(timezone.utc)
+            self._app.post_message(KeepAliveUpdated(active=True, last_success=self._last_keepalive_time, failed=False))
+        else:
+            self._keepalive_failures += 1
+            if self._keepalive_failures >= MAX_KEEPALIVE_FAILURES:
+                self._keepalive_failed = True
+                logger.warning("Keepalive disabled after %d consecutive failures", self._keepalive_failures)
+                self._app.post_message(
+                    KeepAliveUpdated(active=False, last_success=self._last_keepalive_time, failed=True)
+                )
+            else:
+                self._app.post_message(
+                    KeepAliveUpdated(active=True, last_success=self._last_keepalive_time, failed=False)
+                )
 
     # -- error / backoff handling --------------------------------------------
 

@@ -43,6 +43,20 @@ from dbxtop import __version__
     envvar="DBXTOP_THEME",
     help="Color theme.",
 )
+@click.option(
+    "--keepalive",
+    is_flag=True,
+    default=False,
+    envvar="DBXTOP_KEEPALIVE",
+    help="Send periodic keep-alive pings to prevent cluster auto-termination.",
+)
+@click.option(
+    "--keepalive-interval",
+    default=300.0,
+    type=click.FloatRange(min=60.0, max=1800.0),
+    envvar="DBXTOP_KEEPALIVE_INTERVAL",
+    help="Keep-alive ping interval in seconds (60–1800).",
+)
 @click.version_option(version=__version__, prog_name="dbxtop")
 def main(
     profile: str,
@@ -50,6 +64,8 @@ def main(
     refresh: float,
     slow_refresh: float,
     theme: str,
+    keepalive: bool,
+    keepalive_interval: float,
 ) -> None:
     """Real-time terminal dashboard for Databricks/Spark clusters."""
     if slow_refresh < refresh:
@@ -66,5 +82,7 @@ def main(
         refresh_interval=refresh,
         slow_refresh_interval=slow_refresh,
         theme_name=theme,
+        keepalive=keepalive,
+        keepalive_interval=keepalive_interval,
     )
     app.run()
