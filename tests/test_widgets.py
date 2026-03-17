@@ -7,8 +7,8 @@ from collections import deque
 import pytest
 
 from dbxtop.api.models import format_bytes, format_duration
-from dbxtop.widgets.progress_cell import render_progress, render_progress_rich
-from dbxtop.widgets.spark_line import render_sparkline, render_sparkline_rich
+from dbxtop.widgets.progress_cell import render_progress
+from dbxtop.widgets.spark_line import render_sparkline
 from dbxtop.widgets.status_indicator import (
     CLUSTER_STATES,
     JOB_STATES,
@@ -68,27 +68,6 @@ class TestRenderProgress:
     def test_negative_total_treated_as_zero(self) -> None:
         result = render_progress(5, -1)
         assert "0/0" in result
-
-
-class TestRenderProgressRich:
-    def test_half_done_has_green(self) -> None:
-        result = render_progress_rich(50, 100)
-        assert "[green]" in result
-        assert "50/100" in result
-
-    def test_with_failed_uses_yellow_and_red(self) -> None:
-        result = render_progress_rich(60, 100, failed=20)
-        assert "[yellow]" in result
-        assert "[red]" in result
-
-    def test_empty_zero_total(self) -> None:
-        result = render_progress_rich(0, 0)
-        assert "0/0" in result
-
-    def test_full_completed_green(self) -> None:
-        result = render_progress_rich(100, 100)
-        assert "[green]" in result
-        assert "100/100" in result
 
 
 # ---------------------------------------------------------------------------
@@ -157,30 +136,6 @@ class TestRenderSparkline:
         assert len(result) == 10
         # Leading spaces for padding
         assert result[:8] == " " * 8
-
-
-class TestRenderSparklineRich:
-    def test_rising_trend_uses_rising_colour(self) -> None:
-        # Latest value (10) is above the mean (5.5)
-        values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
-        result = render_sparkline_rich(values, width=10)
-        assert "[red]" in result  # Default rising_colour is red
-
-    def test_falling_trend_uses_falling_colour(self) -> None:
-        # Latest value (1) is below the mean (5.5)
-        values = [10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]
-        result = render_sparkline_rich(values, width=10)
-        assert "[green]" in result  # Default falling_colour is green
-
-    def test_empty_no_colour(self) -> None:
-        result = render_sparkline_rich([], width=5)
-        assert "[" not in result  # No Rich markup for empty
-
-    def test_custom_colours(self) -> None:
-        values = [1.0, 2.0, 3.0]
-        result = render_sparkline_rich(values, width=5, rising_colour="cyan", falling_colour="blue")
-        # Latest (3.0) > mean (2.0) -> rising
-        assert "[cyan]" in result
 
 
 # ---------------------------------------------------------------------------

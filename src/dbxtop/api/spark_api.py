@@ -297,7 +297,15 @@ class SparkRESTClient:
 
             # Rate limit handling
             if resp.status_code == 429:
-                self._rate_limit_backoff = min((self._rate_limit_backoff or 1.0) * 2, 30.0)
+                # Prefer server-provided Retry-After, fall back to exponential backoff
+                retry_after = resp.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        self._rate_limit_backoff = min(float(retry_after), 60.0)
+                    except ValueError:
+                        self._rate_limit_backoff = min((self._rate_limit_backoff or 1.0) * 2, 30.0)
+                else:
+                    self._rate_limit_backoff = min((self._rate_limit_backoff or 1.0) * 2, 30.0)
                 self._rate_limited = True
                 self._rate_limit_until = time.monotonic() + self._rate_limit_backoff
                 logger.warning("Rate limited on %s — backing off %.1fs", endpoint, self._rate_limit_backoff)

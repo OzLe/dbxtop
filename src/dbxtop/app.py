@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 from textual.app import App, ComposeResult
@@ -123,8 +123,6 @@ class RunNameModal(ModalScreen[Optional[str]]):
 
     def compose(self) -> ComposeResult:
         """Build the modal layout with an input field for the run name."""
-        from datetime import datetime, timezone
-
         default_name = f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
         with Static(id="run-name-container"):
             yield Static("[bold]Start New Run[/bold]\n")

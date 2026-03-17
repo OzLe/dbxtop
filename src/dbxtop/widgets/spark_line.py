@@ -53,35 +53,3 @@ def render_sparkline(
     if len(result) < width:
         result = " " * (width - len(result)) + result
     return result
-
-
-def render_sparkline_rich(
-    values: Union[Sequence[float], Deque[float]],
-    width: int = 20,
-    min_val: Optional[float] = None,
-    max_val: Optional[float] = None,
-    rising_colour: str = "red",
-    falling_colour: str = "green",
-) -> str:
-    """Render a sparkline with Rich colour based on trend.
-
-    Args:
-        values: Time-series data points.
-        width: Number of characters in the output.
-        min_val: Floor for scaling.
-        max_val: Ceiling for scaling.
-        rising_colour: Colour when the latest value is above the mean.
-        falling_colour: Colour when the latest value is at or below the mean.
-
-    Returns:
-        A Rich-markup sparkline string.
-    """
-    line = render_sparkline(values, width, min_val, max_val)
-    if not values:
-        return line
-
-    vals = list(values)
-    mean = sum(vals) / len(vals) if vals else 0
-    latest = vals[-1]
-    colour = rising_colour if latest > mean else falling_colour
-    return f"[{colour}]{line}[/{colour}]"
