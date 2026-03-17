@@ -221,12 +221,8 @@ class DatabricksClient:
             if auth_header.startswith("Bearer "):
                 return auth_header[7:]
         except Exception as exc:
-            raise AuthenticationError(
-                f"Token retrieval failed for profile '{self._profile}': {exc}"
-            ) from exc
-        raise AuthenticationError(
-            f"No valid token available for profile '{self._profile}'"
-        )
+            raise AuthenticationError(f"Token retrieval failed for profile '{self._profile}': {exc}") from exc
+        raise AuthenticationError(f"No valid token available for profile '{self._profile}'")
 
     async def keepalive_ping(self) -> bool:
         """Send a lightweight command to keep the cluster alive.

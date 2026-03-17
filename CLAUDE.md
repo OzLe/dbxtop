@@ -270,6 +270,7 @@ When implementing any view or component, consult the specification document for 
 ### Code Style
 
 - **Linter:** ruff (configured in `pyproject.toml`)
+- **Formatter:** ruff format. **Always run `ruff format src/ tests/` before committing** — CI enforces `ruff format --check` and will reject unformatted code.
 - **Line length:** 120 characters
 - **Target Python:** 3.9+ (use `from __future__ import annotations` for modern type syntax)
 - **Type hints:** Strict mypy (`strict = true` in pyproject.toml). All public functions must have complete type annotations.
