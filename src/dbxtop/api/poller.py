@@ -215,11 +215,10 @@ class MetricsPoller:
         updated: Set[str] = set()
 
         # SDK calls (always available)
-        all_sdk_slots = ("cluster", "events", "job_runs", "libraries")
+        all_sdk_slots = ("cluster", "events", "libraries")
         all_sdk_fns: tuple[Callable[..., Coroutine[Any, Any, Any]], ...] = (
             self._dbx.get_cluster,
             self._dbx.get_events,
-            self._dbx.get_job_runs,
             self._dbx.get_library_status,
         )
         active_sdk_slots = []
@@ -255,7 +254,7 @@ class MetricsPoller:
                     "Spark context ID changed (%s → %s) — re-discovering app", self._previous_spark_context_id, ctx_id
                 )
                 if self._spark is not None:
-                    self._spark._app_id = None  # noqa: SLF001
+                    self._spark.reset_app_id()
                     self._app.call_later(self._try_spark_reconnect)
             if ctx_id:
                 self._previous_spark_context_id = ctx_id
@@ -383,5 +382,5 @@ class MetricsPoller:
         try:
             await self._spark.discover_app_id()
             logger.info("Spark app re-discovered successfully")
-        except RuntimeError:
-            logger.info("Spark app not yet available — will retry on next poll")
+        except Exception:
+            logger.info("Spark app not yet available — will retry on next poll", exc_info=True)

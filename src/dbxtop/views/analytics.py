@@ -7,6 +7,7 @@ stage, job, SQL, and cluster data.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
@@ -26,6 +27,8 @@ from dbxtop.api.cache import DataCache
 from dbxtop.api.models import ExecutorInfo, format_bytes
 from dbxtop.views.base import BaseView
 from dbxtop.widgets.spark_line import render_sparkline
+
+logger = logging.getLogger(__name__)
 
 
 class AnalyticsView(BaseView):
@@ -213,7 +216,7 @@ class AnalyticsView(BaseView):
                 self._render_recommendations_panel(report.recommendations)
             )
         except Exception:  # noqa: BLE001 — View may not be mounted yet
-            pass
+            logger.debug("Could not update analytics panels", exc_info=True)
 
     def set_run_state(self, name: Optional[str], started: Optional[datetime]) -> None:
         """Set the active run indicator state.

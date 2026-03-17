@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 import httpx
@@ -64,6 +65,7 @@ class SparkRESTClient:
         self._rate_limit_backoff: float = 0.0
         self._rate_limited: bool = False
         self._rate_limit_until: float = 0.0
+        self._available_checked_at: float = 0.0
         self._token_provider = token_provider
 
         headers: Dict[str, str] = {}
@@ -73,7 +75,7 @@ class SparkRESTClient:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
             headers=headers,
-            follow_redirects=True,
+            follow_redirects=False,
         )
 
     async def _resolve_token(self) -> Optional[str]:
@@ -99,11 +101,14 @@ class SparkRESTClient:
     @property
     def _base_url(self) -> str:
         """Driver proxy base URL (without trailing slash)."""
-        return f"{self._workspace_url}/driver-proxy-api/o/{self._org_id}/{self._cluster_id}/{self._port}"
+        org = quote(str(self._org_id), safe="")
+        cid = quote(str(self._cluster_id), safe="")
+        return f"{self._workspace_url}/driver-proxy-api/o/{org}/{cid}/{self._port}"
 
     def _app_url(self, endpoint: str) -> str:
         """Full URL for a Spark application endpoint."""
-        return f"{self._base_url}/api/v1/applications/{self._app_id}/{endpoint}"
+        app = quote(str(self._app_id), safe="")
+        return f"{self._base_url}/api/v1/applications/{app}/{endpoint}"
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -141,12 +146,19 @@ class SparkRESTClient:
     async def is_available(self) -> bool:
         """Check whether the Spark REST API is reachable.
 
+        Uses the cached ``_available`` flag if checked within the last 30 s
+        to avoid sending a network request on every fast poll cycle.
+
         Returns:
             ``True`` if a previous ``discover_app_id`` succeeded and the
             proxy is still responding; ``False`` otherwise.
         """
         if not self._app_id:
             return False
+        # Return cached result if checked recently (30s)
+        now = time.monotonic()
+        if self._available and (now - self._available_checked_at) < 30.0:
+            return True
         try:
             headers: Optional[Dict[str, str]] = None
             token = await self._resolve_token()
@@ -154,10 +166,16 @@ class SparkRESTClient:
                 headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(f"{self._base_url}/api/v1/applications", headers=headers)
             self._available = resp.is_success
+            self._available_checked_at = now
             return self._available
         except httpx.TransportError:
             self._available = False
             return False
+
+    def reset_app_id(self) -> None:
+        """Clear the cached Spark application ID to trigger re-discovery."""
+        self._app_id = None
+        self._available = False
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

@@ -6,6 +6,7 @@ enabling sparkline rendering and stale-data detection.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -22,6 +23,8 @@ from dbxtop.api.models import (
     SparkJob,
     SparkStage,
 )
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -95,10 +98,10 @@ class DataCache:
         Args:
             slot_name: Name of the slot.
             error_msg: Human-readable error description.
-
-        Raises:
-            KeyError: If *slot_name* is not a recognised slot.
         """
+        if slot_name not in self._slots:
+            logger.warning("mark_error called for unknown slot '%s'", slot_name)
+            return
         slot = self._slots[slot_name]
         slot.error = error_msg
         slot.stale = True

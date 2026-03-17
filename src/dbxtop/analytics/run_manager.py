@@ -22,6 +22,8 @@ from dbxtop.api.models import ExecutorInfo
 logger = logging.getLogger(__name__)
 
 SNAPSHOT_INTERVAL_S: float = 30.0
+MAX_HISTORY_ENTRIES: int = 2000
+"""Cap for health_history and executor_count_history lists (~2.8 hours at 5s intervals)."""
 
 # Patterns that indicate a Spark config key may contain sensitive data.
 _SENSITIVE_KEY_PATTERNS = re.compile(
@@ -102,12 +104,16 @@ class RunManager:
         now = report.timestamp
         self._accumulator.update(report.insights, now)
 
-        # Health history (every cycle)
+        # Health history (every cycle, capped)
         self._active_run.health_history.append((now, report.health.score))
+        if len(self._active_run.health_history) > MAX_HISTORY_ENTRIES:
+            self._active_run.health_history = self._active_run.health_history[-MAX_HISTORY_ENTRIES:]
 
-        # Executor count history
+        # Executor count history (capped)
         active_count = len([e for e in executors if e.is_active])
         self._active_run.executor_count_history.append((now, active_count))
+        if len(self._active_run.executor_count_history) > MAX_HISTORY_ENTRIES:
+            self._active_run.executor_count_history = self._active_run.executor_count_history[-MAX_HISTORY_ENTRIES:]
 
         # Periodic full snapshot
         if self._last_snapshot is None or (now - self._last_snapshot).total_seconds() >= SNAPSHOT_INTERVAL_S:
