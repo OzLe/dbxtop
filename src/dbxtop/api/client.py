@@ -192,7 +192,7 @@ class DatabricksClient:
                     self._org_id = org
                     return self._org_id
         except Exception:
-            pass
+            logger.warning("org_id discovery via HTTP header failed", exc_info=True)
 
         self._org_id = ""
         return self._org_id
@@ -213,7 +213,7 @@ class DatabricksClient:
             if auth_header.startswith("Bearer "):
                 return auth_header[7:]
         except Exception:
-            pass
+            logger.warning("Token retrieval via authenticate() failed", exc_info=True)
         return ""
 
     # -- private helpers -----------------------------------------------------
@@ -225,6 +225,11 @@ class DatabricksClient:
         except NotFound as exc:
             raise ClusterNotFoundError(f"Cluster {self._cluster_id} not found: {exc}") from exc
         except Exception as exc:
+            # Check for specific SDK auth exceptions first
+            exc_type_name = type(exc).__name__
+            if exc_type_name in ("Unauthenticated", "PermissionDenied"):
+                raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
+            # Fallback: check error message for auth indicators
             msg = str(exc).lower()
             if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
                 raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
