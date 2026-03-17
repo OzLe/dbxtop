@@ -51,18 +51,6 @@ class StageStatus(str, enum.Enum):
     SKIPPED = "SKIPPED"
 
 
-class StorageLevel(str, enum.Enum):
-    """RDD / DataFrame storage level."""
-
-    NONE = "NONE"
-    DISK_ONLY = "DISK_ONLY"
-    MEMORY_ONLY = "MEMORY_ONLY"
-    MEMORY_AND_DISK = "MEMORY_AND_DISK"
-    OFF_HEAP = "OFF_HEAP"
-    MEMORY_ONLY_SER = "MEMORY_ONLY_SER"
-    MEMORY_AND_DISK_SER = "MEMORY_AND_DISK_SER"
-
-
 # ---------------------------------------------------------------------------
 # Format utilities
 # ---------------------------------------------------------------------------

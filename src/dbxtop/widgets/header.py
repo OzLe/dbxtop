@@ -13,18 +13,9 @@ from textual.widgets import Static
 
 from dbxtop.api.cache import DataCache
 from dbxtop.api.models import ClusterInfo, ClusterState, format_duration
+from dbxtop.widgets.status_indicator import CLUSTER_STATES
 
-# State → (colour, symbol)
-_STATE_STYLES: dict[str, tuple[str, str]] = {
-    "RUNNING": ("green", "●"),
-    "PENDING": ("yellow", "●"),
-    "RESTARTING": ("yellow", "●"),
-    "RESIZING": ("yellow", "●"),
-    "TERMINATING": ("red", "○"),
-    "TERMINATED": ("red", "○"),
-    "ERROR": ("red", "✖"),
-    "UNKNOWN": ("dim", "?"),
-}
+_STATE_STYLES = CLUSTER_STATES
 
 
 class ClusterHeader(Static):

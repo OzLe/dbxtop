@@ -148,10 +148,11 @@ def _parse_byte_string(s: str) -> Optional[int]:
 
 
 class AnalyticsEngine:
-    """Stateless engine that computes performance insights from cached metrics.
+    """Engine that computes performance insights from cached metrics.
 
-    All methods are pure functions (no side effects, no API calls).
-    The engine reads from Pydantic model lists and returns Insight/HealthScore objects.
+    All public methods are side-effect-free (no API calls, no I/O).
+    The engine reads from Pydantic model lists and returns Insight/HealthScore
+    objects. Internal counters are reset on each ``analyze()`` call.
     """
 
     # Counters for generating unique insight IDs per category per analyze() call
