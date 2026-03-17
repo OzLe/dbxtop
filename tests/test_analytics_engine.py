@@ -44,8 +44,8 @@ def make_executor(
     failed_tasks: int = 0,
     total_duration_ms: int = 600_000,
     total_gc_time_ms: int = 6_000,
-    max_memory: int = 4_294_967_296,  # 4 GB
-    memory_used: int = 1_073_741_824,  # 1 GB (25%)
+    max_memory: int = 17_179_869_184,  # 16 GB
+    memory_used: int = 4_294_967_296,  # 4 GB (25%)
     disk_used: int = 0,
     total_shuffle_read: int = 1_000_000,
     total_shuffle_write: int = 500_000,
@@ -956,7 +956,10 @@ class TestHealthScore:
             make_executor("2"),
         ]
         health = engine.compute_health_score([], executors, [])
-        expected_keys = {"gc", "spill", "skew", "utilization", "shuffle", "task_failures"}
+        expected_keys = {
+            "gc", "spill", "skew", "utilization", "shuffle", "task_failures",
+            "config", "driver", "io_efficiency", "stability",
+        }
         assert set(health.component_scores.keys()) == expected_keys
 
 
