@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/dbxtop)](https://pypi.org/project/dbxtop/)
 [![Python](https://img.shields.io/pypi/pyversions/dbxtop)](https://pypi.org/project/dbxtop/)
-[![CI](https://github.com/ozlevi/dbxtop/actions/workflows/ci.yml/badge.svg)](https://github.com/ozlevi/dbxtop/actions/workflows/ci.yml)
+[![CI](https://github.com/OzLe/dbxtop/actions/workflows/ci.yml/badge.svg)](https://github.com/OzLe/dbxtop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Real-time terminal dashboard for Databricks/Spark clusters. Think `htop`, but for your Spark jobs.
