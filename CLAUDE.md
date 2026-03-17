@@ -127,10 +127,10 @@ All accessed via the Databricks driver proxy.
 
 ```python
 # For workspace https://adb-1234567890.1.azuredatabricks.net
-# with org_id "1234567890", cluster_id "0311-160038-vjuv0ah9"
+# with org_id "1234567890", cluster_id "0123-456789-abcdefgh"
 url = (
     "https://adb-1234567890.1.azuredatabricks.net"
-    "/driver-proxy-api/o/1234567890/0311-160038-vjuv0ah9/40001"
+    "/driver-proxy-api/o/1234567890/0123-456789-abcdefgh/40001"
     "/api/v1/applications/app-20260316120000-0000/jobs"
 )
 ```
@@ -152,19 +152,19 @@ pip install -e ".[dev]"
 
 ```bash
 # Standard usage (requires Databricks CLI configured)
-dbxtop --cluster-id 0311-160038-vjuv0ah9 --profile yad2-prod
+dbxtop --cluster-id 0123-456789-abcdefgh --profile my-profile
 
 # Short flags
-dbxtop -c 0311-160038-vjuv0ah9 -p yad2-prod
+dbxtop -c 0123-456789-abcdefgh -p my-profile
 
 # Custom refresh interval
-dbxtop -c 0311-160038-vjuv0ah9 -p yad2-prod --refresh 1.0
+dbxtop -c 0123-456789-abcdefgh -p my-profile --refresh 1.0
 
 # Light theme
-dbxtop -c 0311-160038-vjuv0ah9 -p yad2-prod --theme light
+dbxtop -c 0123-456789-abcdefgh -p my-profile --theme light
 
 # Via module
-python -m dbxtop -c 0311-160038-vjuv0ah9 -p yad2-prod
+python -m dbxtop -c 0123-456789-abcdefgh -p my-profile
 ```
 
 ### Development Mode
@@ -217,8 +217,8 @@ pytest tests/test_snapshots.py --snapshot-update
 Requires a running Databricks cluster:
 
 ```bash
-export DBXTOP_TEST_CLUSTER_ID="0311-160038-vjuv0ah9"
-export DATABRICKS_CONFIG_PROFILE="yad2-prod"
+export DBXTOP_TEST_CLUSTER_ID="0123-456789-abcdefgh"
+export DATABRICKS_CONFIG_PROFILE="my-profile"
 pytest tests/test_integration.py -v
 ```
 
@@ -315,7 +315,7 @@ dbxtop uses the Databricks CLI profile system (`~/.databrickscfg`):
 host = https://adb-1234567890.1.azuredatabricks.net
 token = dapi...
 
-[yad2-prod]
+[my-profile]
 host = https://adb-1234567890.1.azuredatabricks.net
 token = dapi...
 ```
@@ -325,8 +325,8 @@ The `--profile` flag (or `DBXTOP_PROFILE` env var) selects which profile to use.
 ### Getting a Cluster ID
 
 - **Databricks UI:** Navigate to Compute, click on a cluster, copy the ID from the URL or the cluster details page.
-- **Databricks CLI:** `databricks clusters list --profile yad2-prod`
-- **Format:** `XXXX-XXXXXX-XXXXXXXX` (e.g., `0311-160038-vjuv0ah9`)
+- **Databricks CLI:** `databricks clusters list --profile my-profile`
+- **Format:** `XXXX-XXXXXX-XXXXXXXX` (e.g., `0123-456789-abcdefgh`)
 
 ### Shared vs Single-User Cluster Differences
 

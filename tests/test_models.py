@@ -127,7 +127,7 @@ class TestClusterInfo:
 
     def test_round_trip(self) -> None:
         info = ClusterInfo(
-            cluster_id="0311-160038-vjuv0ah9",
+            cluster_id="0123-456789-abcdefgh",
             cluster_name="test-cluster",
             state=ClusterState.RUNNING,
             num_workers=4,

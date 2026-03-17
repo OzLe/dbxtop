@@ -20,7 +20,7 @@ class TestURLConstruction:
     def _make_client(self, workspace_url: str = "https://adb-123.1.azuredatabricks.net") -> SparkRESTClient:
         return SparkRESTClient(
             workspace_url=workspace_url,
-            cluster_id="0311-160038-vjuv0ah9",
+            cluster_id="0123-456789-abcdefgh",
             org_id="123",
             port=40001,
             token="dapi-test",
@@ -29,7 +29,7 @@ class TestURLConstruction:
     def test_base_url(self) -> None:
         client = self._make_client()
         assert client._base_url == (
-            "https://adb-123.1.azuredatabricks.net/driver-proxy-api/o/123/0311-160038-vjuv0ah9/40001"
+            "https://adb-123.1.azuredatabricks.net/driver-proxy-api/o/123/0123-456789-abcdefgh/40001"
         )
 
     def test_base_url_strips_trailing_slash(self) -> None:
@@ -43,7 +43,7 @@ class TestURLConstruction:
         url = client._app_url("jobs")
         assert url == (
             "https://adb-123.1.azuredatabricks.net"
-            "/driver-proxy-api/o/123/0311-160038-vjuv0ah9/40001"
+            "/driver-proxy-api/o/123/0123-456789-abcdefgh/40001"
             "/api/v1/applications/app-20260316-0000/jobs"
         )
 
