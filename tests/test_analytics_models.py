@@ -87,15 +87,32 @@ class TestInsightCategory:
     def test_all_members(self) -> None:
         expected = {
             # Original 9
-            "GC", "SPILL", "SKEW", "SHUFFLE", "UTILIZATION",
-            "PARTITION", "STRAGGLER", "TASK_FAILURE", "MEMORY",
+            "GC",
+            "SPILL",
+            "SKEW",
+            "SHUFFLE",
+            "UTILIZATION",
+            "PARTITION",
+            "STRAGGLER",
+            "TASK_FAILURE",
+            "MEMORY",
             # Phase A — Config/model checks
-            "AQE_CONFIG", "SERIALIZATION", "EXECUTOR_SIZING",
-            "DRIVER_BOTTLENECK", "CONFIG_ANTI_PATTERN", "PHOTON_OPPORTUNITY",
+            "AQE_CONFIG",
+            "SERIALIZATION",
+            "EXECUTOR_SIZING",
+            "DRIVER_BOTTLENECK",
+            "CONFIG_ANTI_PATTERN",
+            "PHOTON_OPPORTUNITY",
             # Phase B — Metric-derived
-            "IO_PATTERN", "CPU_IO_BOUND", "STAGE_RETRY", "SQL_ANOMALY",
+            "IO_PATTERN",
+            "CPU_IO_BOUND",
+            "STAGE_RETRY",
+            "SQL_ANOMALY",
             # Phase C — Cross-reference
-            "JOIN_STRATEGY", "CACHING", "AUTO_TERMINATION", "DYNAMIC_ALLOCATION",
+            "JOIN_STRATEGY",
+            "CACHING",
+            "AUTO_TERMINATION",
+            "DYNAMIC_ALLOCATION",
         }
         actual = {c.value for c in InsightCategory}
         assert actual == expected

@@ -957,8 +957,16 @@ class TestHealthScore:
         ]
         health = engine.compute_health_score([], executors, [])
         expected_keys = {
-            "gc", "spill", "skew", "utilization", "shuffle", "task_failures",
-            "config", "driver", "io_efficiency", "stability",
+            "gc",
+            "spill",
+            "skew",
+            "utilization",
+            "shuffle",
+            "task_failures",
+            "config",
+            "driver",
+            "io_efficiency",
+            "stability",
         }
         assert set(health.component_scores.keys()) == expected_keys
 
