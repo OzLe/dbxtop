@@ -593,13 +593,13 @@ Terminal minimum: 80 columns x 24 rows. Recommended: 120+ columns x 40+ rows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ [Cluster]   Jobs    Stages    Executors    SQL    Storage                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─ Cluster Identity ──────────────────────────────────────────────────┐    │
-│  │ Name:    my-analytics-cluster          ID: 0311-160038-vjuv0ah9    │    │
+│  │ Name:    my-analytics-cluster          ID: 0123-456789-abcdefgh    │    │
 │  │ DBR:     15.4 LTS (Spark 3.5.0)       Engine: PHOTON              │    │
 │  │ Mode:    Shared Access (UC)            Creator: user@company.com   │    │
 │  │ Policy:  data-engineering-medium       Auto-term: 60 min           │    │
@@ -640,7 +640,7 @@ Terminal minimum: 80 columns x 24 rows. Recommended: 120+ columns x 40+ rows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Cluster   [Jobs]    Stages    Executors    SQL    Storage                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -679,7 +679,7 @@ Terminal minimum: 80 columns x 24 rows. Recommended: 120+ columns x 40+ rows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Cluster    Jobs   [Stages]    Executors    SQL    Storage                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -724,7 +724,7 @@ Terminal minimum: 80 columns x 24 rows. Recommended: 120+ columns x 40+ rows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Cluster    Jobs    Stages   [Executors]    SQL    Storage                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -769,7 +769,7 @@ Terminal minimum: 80 columns x 24 rows. Recommended: 120+ columns x 40+ rows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Cluster    Jobs    Stages    Executors   [SQL]    Storage                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -812,7 +812,7 @@ Terminal minimum: 80 columns x 24 rows. Recommended: 120+ columns x 40+ rows.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ● RUNNING  │  ↑ 4h 23m  │  ⟳ 3s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Cluster    Jobs    Stages    Executors    SQL   [Storage]                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -855,7 +855,7 @@ When the cluster is not RUNNING, Spark REST views degrade:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ dbxtop  │  my-analytics-cluster  │  ○ TERMINATED  │  --  │  ⟳ 15s  │  yad2-prod  │
+│ dbxtop  │  my-analytics-cluster  │  ○ TERMINATED  │  --  │  ⟳ 15s  │  my-profile  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Cluster   [Jobs]    Stages    Executors    SQL    Storage                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -1260,19 +1260,19 @@ Options:
 
 ```bash
 # Basic usage with profile and cluster ID
-dbxtop --profile yad2-prod --cluster-id 0311-160038-vjuv0ah9
+dbxtop --profile my-profile --cluster-id 0123-456789-abcdefgh
 
 # Short flags
-dbxtop -p yad2-prod -c 0311-160038-vjuv0ah9
+dbxtop -p my-profile -c 0123-456789-abcdefgh
 
 # Faster refresh for active debugging
-dbxtop -p yad2-prod -c 0311-160038-vjuv0ah9 --fast-refresh 1.0
+dbxtop -p my-profile -c 0123-456789-abcdefgh --fast-refresh 1.0
 
 # SDK-only mode (no Spark REST, works even on terminated clusters)
-dbxtop -p yad2-prod -c 0311-160038-vjuv0ah9 --no-spark
+dbxtop -p my-profile -c 0123-456789-abcdefgh --no-spark
 
 # Using DEFAULT profile
-dbxtop -c 0311-160038-vjuv0ah9
+dbxtop -c 0123-456789-abcdefgh
 ```
 
 ### 9.3 Configuration Resolution
@@ -1288,7 +1288,7 @@ Settings are resolved in this priority order (highest first):
 
 ```toml
 # ~/.config/dbxtop/config.toml
-profile = "yad2-prod"
+profile = "my-profile"
 spark_port = 40001
 fast_refresh = 3.0
 slow_refresh = 15.0
@@ -1434,10 +1434,10 @@ def build_spark_proxy_base(workspace_url: str, org_id: str, cluster_id: str, por
     Example:
         workspace_url = "https://adb-1234567890.12.azuredatabricks.net"
         org_id = "1234567890"
-        cluster_id = "0311-160038-vjuv0ah9"
+        cluster_id = "0123-456789-abcdefgh"
         port = 40001
 
-        Returns: "https://adb-1234567890.12.azuredatabricks.net/driver-proxy-api/o/1234567890/0311-160038-vjuv0ah9/40001"
+        Returns: "https://adb-1234567890.12.azuredatabricks.net/driver-proxy-api/o/1234567890/0123-456789-abcdefgh/40001"
     """
     base = workspace_url.rstrip("/")
     return f"{base}/driver-proxy-api/o/{org_id}/{cluster_id}/{port}"

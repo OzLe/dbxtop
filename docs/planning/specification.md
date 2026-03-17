@@ -110,19 +110,19 @@ Priority: CLI flag > environment variable > config file (`~/.config/dbxtop/confi
 
 ```bash
 # Standard usage
-dbxtop --profile yad2-prod --cluster-id 0311-160038-vjuv0ah9
+dbxtop --profile my-profile --cluster-id 0123-456789-abcdefgh
 
 # Short flags
-dbxtop -p yad2-prod -c 0311-160038-vjuv0ah9
+dbxtop -p my-profile -c 0123-456789-abcdefgh
 
 # Faster refresh for active debugging
-dbxtop -p yad2-prod -c 0311-160038-vjuv0ah9 --refresh 1.0
+dbxtop -p my-profile -c 0123-456789-abcdefgh --refresh 1.0
 
 # Light theme
-dbxtop -p yad2-prod -c 0311-160038-vjuv0ah9 --theme light
+dbxtop -p my-profile -c 0123-456789-abcdefgh --theme light
 
 # Using DEFAULT profile (no --profile needed)
-dbxtop -c 0311-160038-vjuv0ah9
+dbxtop -c 0123-456789-abcdefgh
 ```
 
 ---
@@ -137,7 +137,7 @@ dbxtop | {cluster_name} | {state_badge} | up {uptime} | next {countdown}s | {pro
 
 **Concrete example:**
 ```
-dbxtop | my-analytics-cluster | ● RUNNING | up 4d 2h 23m | next 3s | yad2-prod
+dbxtop | my-analytics-cluster | ● RUNNING | up 4d 2h 23m | next 3s | my-profile
 ```
 
 ### 3.2 Fields
@@ -180,7 +180,7 @@ Computed as `now() - cluster.start_time`. Display rules:
 When data is stale, append a yellow indicator after the countdown:
 
 ```
-dbxtop | my-cluster | ● RUNNING | up 4h 23m | next 3s | ⚠ stale 30s | yad2-prod
+dbxtop | my-cluster | ● RUNNING | up 4h 23m | next 3s | ⚠ stale 30s | my-profile
 ```
 
 The `stale Xs` indicator appears when any cache slot has not been updated for more than 2x its expected poll interval. It shows the age of the oldest stale slot.

@@ -49,10 +49,10 @@ pipx install dbxtop
 dbxtop --cluster-id <CLUSTER_ID>
 
 # With a specific profile
-dbxtop --profile my-workspace --cluster-id 0311-160038-vjuv0ah9
+dbxtop --profile my-workspace --cluster-id 0123-456789-abcdefgh
 
 # Short flags
-dbxtop -p my-workspace -c 0311-160038-vjuv0ah9
+dbxtop -p my-workspace -c 0123-456789-abcdefgh
 
 # Light theme
 dbxtop -c <CLUSTER_ID> --theme light
@@ -62,7 +62,7 @@ dbxtop -c <CLUSTER_ID> --theme light
 
 - **Databricks UI:** Compute > click cluster > copy ID from URL or details
 - **Databricks CLI:** `databricks clusters list --profile <profile>`
-- **Format:** `XXXX-XXXXXX-XXXXXXXX` (e.g., `0311-160038-vjuv0ah9`)
+- **Format:** `XXXX-XXXXXX-XXXXXXXX` (e.g., `0123-456789-abcdefgh`)
 
 ## Configuration
 

@@ -35,7 +35,7 @@ _NOW = datetime(2026, 3, 17, 12, 0, 0, tzinfo=timezone.utc)
 
 def _make_cluster() -> ClusterInfo:
     return ClusterInfo(
-        cluster_id="0311-160038-vjuv0ah9",
+        cluster_id="0123-456789-abcdefgh",
         cluster_name="analytics-prod",
         state=ClusterState.RUNNING,
         state_message="",
