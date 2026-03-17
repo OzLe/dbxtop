@@ -43,5 +43,8 @@ htmlcov/
 # Claude Code
 .claude/
 
+# hatch-vcs generated version
+src/dbxtop/_version.py
+
 # Babysitter orchestration
 .a5c/

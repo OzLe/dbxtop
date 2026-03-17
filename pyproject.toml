@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -49,7 +49,10 @@ Homepage = "https://github.com/ozlevi/dbxtop"
 Issues = "https://github.com/ozlevi/dbxtop/issues"
 
 [tool.hatch.version]
-path = "src/dbxtop/__init__.py"
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/dbxtop/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dbxtop"]
