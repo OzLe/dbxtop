@@ -77,13 +77,22 @@ class SparkRESTClient:
         )
 
     async def _resolve_token(self) -> Optional[str]:
-        """Resolve the token from the provider, handling both sync and async callables."""
+        """Resolve the token from the provider, handling both sync and async callables.
+
+        Returns:
+            The bearer token string, or ``None`` if no provider is configured
+            or if token retrieval fails (logged as warning).
+        """
         if not self._token_provider:
             return None
-        result = self._token_provider()
-        if hasattr(result, "__await__"):
-            return await result  # type: ignore[misc]
-        return result  # type: ignore[return-value]
+        try:
+            result = self._token_provider()
+            if hasattr(result, "__await__"):
+                return await result  # type: ignore[misc]
+            return result  # type: ignore[return-value]
+        except Exception:
+            logger.warning("Token provider failed — request will be unauthenticated", exc_info=True)
+            return None
 
     # -- URL construction ----------------------------------------------------
 

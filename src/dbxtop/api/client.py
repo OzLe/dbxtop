@@ -207,6 +207,9 @@ class DatabricksClient:
 
         The ``authenticate()`` call is wrapped in ``asyncio.to_thread()``
         because the SDK may perform network I/O (e.g. OAuth token refresh).
+
+        Raises:
+            AuthenticationError: If no token can be obtained.
         """
         # Try direct token first (PAT) — config.token is a simple property read
         if self._workspace.config.token:
@@ -217,9 +220,13 @@ class DatabricksClient:
             auth_header = headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 return auth_header[7:]
-        except Exception:
-            logger.warning("Token retrieval via authenticate() failed", exc_info=True)
-        return ""
+        except Exception as exc:
+            raise AuthenticationError(
+                f"Token retrieval failed for profile '{self._profile}': {exc}"
+            ) from exc
+        raise AuthenticationError(
+            f"No valid token available for profile '{self._profile}'"
+        )
 
     async def keepalive_ping(self) -> bool:
         """Send a lightweight command to keep the cluster alive.
