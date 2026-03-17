@@ -14,18 +14,18 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
+from dbxtop.analytics.accumulator import AccumulatedInsight, InsightAccumulator
 from dbxtop.analytics.engine import AnalyticsEngine
-from dbxtop.api.models import ExecutorInfo, format_bytes
-from dbxtop.widgets.spark_line import render_sparkline
 from dbxtop.analytics.models import (
     DiagnosticReport,
     HealthScore,
-    Insight,
     Recommendation,
     Severity,
 )
 from dbxtop.api.cache import DataCache
+from dbxtop.api.models import ExecutorInfo, format_bytes
 from dbxtop.views.base import BaseView
+from dbxtop.widgets.spark_line import render_sparkline
 
 
 class AnalyticsView(BaseView):
@@ -98,8 +98,11 @@ class AnalyticsView(BaseView):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._engine = AnalyticsEngine()
+        self._accumulator = InsightAccumulator()
         self._last_refresh: Optional[datetime] = None
         self._last_report: Optional[DiagnosticReport] = None
+        self._run_name: Optional[str] = None
+        self._run_started: Optional[datetime] = None
 
     def compose(self) -> ComposeResult:
         """Build the stable layout -- widgets are updated in-place on refresh."""
@@ -174,6 +177,7 @@ class AnalyticsView(BaseView):
             return
 
         self._last_report = report
+        self._accumulator.update(report.insights, report.timestamp)
         self._update_panels(report, executors, cache)
 
     def _update_panels(
@@ -197,7 +201,7 @@ class AnalyticsView(BaseView):
 
             # Update each panel
             self.query_one("#health-panel", Static).update(self._render_health_panel(report.health))
-            self.query_one("#issues-panel", Static).update(self._render_issues_panel(report.insights))
+            self.query_one("#issues-panel", Static).update(self._render_issues_panel(self._accumulator.get_all()))
             self.query_one("#efficiency-panel", Static).update(
                 self._render_efficiency_panel(executors, cache)  # type: ignore[arg-type]
             )
@@ -206,6 +210,16 @@ class AnalyticsView(BaseView):
             )
         except Exception:  # noqa: BLE001 — View may not be mounted yet
             pass
+
+    def set_run_state(self, name: Optional[str], started: Optional[datetime]) -> None:
+        """Set the active run indicator state.
+
+        Args:
+            name: The name of the active recording run, or None to clear.
+            started: The UTC start time of the run, or None to clear.
+        """
+        self._run_name = name
+        self._run_started = started
 
     # -- panel rendering methods ------------------------------------------------
 
@@ -225,6 +239,12 @@ class AnalyticsView(BaseView):
             f"  [{color} bold]{health.score}[/{color} bold]",
             f"  [{color}]{health.label}[/{color}]",
         ]
+
+        # Show run recording indicator when active
+        if self._run_name is not None and self._run_started is not None:
+            elapsed = self._format_time_ago(self._run_started)
+            lines.insert(0, f"[red bold]●[/red bold] REC [bold]{self._run_name}[/bold] ({elapsed})")
+            lines.insert(1, "")
 
         if health.component_scores:
             lines.append("")
@@ -248,32 +268,62 @@ class AnalyticsView(BaseView):
 
         return "\n".join(lines)
 
-    def _render_issues_panel(self, insights: List[Insight]) -> str:
-        """Render detected issues as a severity-sorted list.
+    def _render_issues_panel(self, accumulated: List[AccumulatedInsight]) -> str:
+        """Render detected issues with occurrence tracking and resolved history.
+
+        Active insights show occurrence count and age. Resolved insights
+        are shown dimmed with the time since resolution.
 
         Args:
-            insights: List of insights from the analytics engine.
+            accumulated: List of accumulated insights (active first, then resolved).
 
         Returns:
             Rich markup string for the issues panel.
         """
         lines = ["[bold]TOP ISSUES[/bold]", ""]
 
-        if not insights:
+        active = [a for a in accumulated if a.is_active]
+        resolved = [a for a in accumulated if not a.is_active]
+
+        if not active and not resolved:
             lines.append("  [green]No issues detected[/green]")
             return "\n".join(lines)
 
-        # Show at most 10 insights
-        displayed = insights[:10]
-        for insight in displayed:
-            icon = _severity_icon(insight.severity)
-            lines.append(f"  {icon} {insight.title}")
+        # Show active insights (at most 10)
+        for acc in active[:10]:
+            icon = _severity_icon(acc.insight.severity)
+            age = self._format_time_ago(acc.first_seen)
+            count_str = f"  x{acc.occurrence_count}" if acc.occurrence_count > 1 else ""
+            lines.append(f"  {icon} {acc.insight.title}{count_str}  {age}")
 
-        remaining = len(insights) - len(displayed)
-        if remaining > 0:
-            lines.append(f"  ... and {remaining} more")
+        remaining_active = len(active) - 10
+        if remaining_active > 0:
+            lines.append(f"  ... and {remaining_active} more")
+
+        # Show resolved insights (at most 5)
+        if resolved:
+            lines.append("")
+            for acc in resolved[:5]:
+                resolved_ago = self._format_time_ago(acc.resolved_at) if acc.resolved_at else "?"
+                lines.append(f"  [green]✓[/green] [dim]{acc.insight.title}[/dim]  resolved {resolved_ago}")
 
         return "\n".join(lines)
+
+    def _format_time_ago(self, dt: datetime) -> str:
+        """Format a datetime as a short relative time string.
+
+        Args:
+            dt: The UTC datetime to format relative to now.
+
+        Returns:
+            Short string like '12s', '3m', or '1h'.
+        """
+        delta = (datetime.now(timezone.utc) - dt).total_seconds()
+        if delta < 60:
+            return f"{int(delta)}s"
+        if delta < 3600:
+            return f"{int(delta / 60)}m"
+        return f"{int(delta / 3600)}h"
 
     def _render_efficiency_panel(
         self,
