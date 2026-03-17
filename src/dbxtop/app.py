@@ -205,8 +205,8 @@ class DbxTopApp(App[None]):
         Binding("slash", "activate_filter", "Filter", show=False),
         Binding("escape", "clear_filter", "Clear filter", show=False),
         Binding("enter", "show_detail", "Detail", show=False),
-        Binding("ctrl+r", "toggle_run", "Run", show=False),
-        Binding("ctrl+l", "show_run_list", "Runs", show=False),
+        Binding("ctrl+r", "toggle_run", "Record Run"),
+        Binding("ctrl+l", "show_run_list", "Saved Runs"),
         Binding("question_mark", "toggle_help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
