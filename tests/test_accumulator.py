@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from dbxtop.analytics.accumulator import AccumulatedInsight, InsightAccumulator, _severity_rank
 from dbxtop.analytics.models import Insight, InsightCategory, Severity
 
