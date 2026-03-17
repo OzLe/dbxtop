@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from datetime import datetime
+from typing import TYPE_CHECKING, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -11,18 +12,21 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static, TabbedContent, TabPane
 
 from dbxtop.api.cache import DataCache
+
+if TYPE_CHECKING:
+    from dbxtop.analytics.run_manager import RunManager
 from dbxtop.api.client import DatabricksClient
 from dbxtop.api.models import ClusterState
 from dbxtop.api.poller import DataUpdated, KeepAliveUpdated, MetricsPoller
 from dbxtop.api.spark_api import SparkRESTClient
 from dbxtop.config import Settings
+from dbxtop.views.analytics import AnalyticsView
 from dbxtop.views.base import BaseView
 from dbxtop.views.cluster import ClusterView
 from dbxtop.views.executors import ExecutorsView
 from dbxtop.views.jobs import JobsView
 from dbxtop.views.sql import SQLView
 from dbxtop.views.stages import StagesView
-from dbxtop.views.analytics import AnalyticsView
 from dbxtop.views.storage import StorageView
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
@@ -99,6 +103,40 @@ class DetailScreen(ModalScreen[None]):
         yield Static(self._content)
 
 
+class RunNameModal(ModalScreen[Optional[str]]):
+    """Modal dialog for entering a run session name."""
+
+    BINDINGS = [Binding("escape", "dismiss", "Cancel")]
+
+    DEFAULT_CSS = """
+    RunNameModal {
+        align: center middle;
+    }
+    RunNameModal > #run-name-container {
+        width: 50;
+        height: auto;
+        padding: 1 2;
+        border: thick $accent;
+        background: $surface;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        """Build the modal layout with an input field for the run name."""
+        from datetime import datetime, timezone
+
+        default_name = f"run-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+        with Static(id="run-name-container"):
+            yield Static("[bold]Start New Run[/bold]\n")
+            yield Input(value=default_name, placeholder="Run name...", id="run-name-input")
+            yield Static("\n[dim]Enter to start, Esc to cancel[/dim]")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Submit the run name when Enter is pressed."""
+        if event.input.id == "run-name-input" and event.value.strip():
+            self.dismiss(event.value.strip())
+
+
 class HelpScreen(ModalScreen[None]):
     """Full-screen help overlay listing all keyboard shortcuts."""
 
@@ -135,6 +173,9 @@ class HelpScreen(ModalScreen[None]):
             "[bold]View Controls[/bold]\n"
             "  s          Cycle sort column\n"
             "  Enter      Open detail popup\n\n"
+            "[bold]Run Recording[/bold]\n"
+            "  Ctrl+R     Start/stop run recording\n"
+            "  Ctrl+L     Show saved runs\n\n"
             "[bold]Application[/bold]\n"
             "  ?          Toggle this help\n"
             "  q          Quit\n"
@@ -166,6 +207,8 @@ class DbxTopApp(App[None]):
         Binding("slash", "activate_filter", "Filter", show=False),
         Binding("escape", "clear_filter", "Clear filter", show=False),
         Binding("enter", "show_detail", "Detail", show=False),
+        Binding("ctrl+r", "toggle_run", "Run", show=False),
+        Binding("ctrl+l", "show_run_list", "Runs", show=False),
         Binding("question_mark", "toggle_help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -199,6 +242,7 @@ class DbxTopApp(App[None]):
         self._poller: Optional[MetricsPoller] = None
         self._header: Optional[ClusterHeader] = None
         self._footer: Optional[KeyboardFooter] = None
+        self._run_manager: Optional[RunManager] = None
 
     # -- compose -------------------------------------------------------------
 
@@ -423,6 +467,9 @@ class DbxTopApp(App[None]):
     def _forward_to_active_view(self, updated_slots: Optional[set[str]] = None) -> None:
         """Forward cache data to the currently active view.
 
+        Also feeds data to the RunManager when a run is recording and the
+        analytics view has produced a diagnostic report.
+
         Args:
             updated_slots: If provided, only refresh when the view's
                 relevant slots intersect with the updated ones.
@@ -442,6 +489,18 @@ class DbxTopApp(App[None]):
                     break
         except Exception:
             logger.debug("Could not forward data to active view", exc_info=True)
+
+        # If a run is recording, feed the latest report to the run manager
+        if self._run_manager is not None and self._run_manager.is_recording:
+            try:
+                analytics_pane = self.query_one(TabbedContent).get_pane("analytics")
+                for child in analytics_pane.walk_children():
+                    if isinstance(child, AnalyticsView) and child._last_report is not None:
+                        executors = self._cache.get("executors").data or []
+                        self._run_manager.on_report(child._last_report, executors)
+                        break
+            except Exception:
+                pass
 
     # -- actions -------------------------------------------------------------
 
@@ -545,6 +604,66 @@ class DbxTopApp(App[None]):
     def action_toggle_help(self) -> None:
         """Show or dismiss the help overlay."""
         self.push_screen(HelpScreen())
+
+    def action_toggle_run(self) -> None:
+        """Toggle run recording on/off.
+
+        If a run is currently recording, stop it and save to disk.
+        Otherwise, show the RunNameModal to start a new run.
+        """
+        if self._run_manager is not None and self._run_manager.is_recording:
+            run = self._run_manager.stop_run()
+            if run:
+                self.notify(f"Run '{run.name}' saved ({run.duration_seconds:.0f}s)", severity="information")
+            self._set_analytics_run_state(None, None)
+        else:
+            self.push_screen(RunNameModal(), callback=self._on_run_name_submitted)
+
+    def _on_run_name_submitted(self, name: Optional[str]) -> None:
+        """Callback when user submits a run name from the modal.
+
+        Args:
+            name: The run name entered by the user, or None if cancelled.
+        """
+        if name is None:
+            return
+
+        if self._run_manager is None:
+            from dbxtop.analytics.run_manager import RunManager
+
+            self._run_manager = RunManager(self._cluster_id)
+
+        # Capture Spark config snapshot from the cluster cache slot
+        config_snapshot: dict[str, str] = {}
+        if self._cache:
+            cluster_slot = self._cache.get("cluster")
+            if cluster_slot.data is not None:
+                config_snapshot = dict(cluster_slot.data.spark_conf)
+
+        run = self._run_manager.start_run(name, config_snapshot)
+        self._set_analytics_run_state(name, run.started_at)
+        self.notify(f"Recording: {name}", severity="information")
+
+    def _set_analytics_run_state(self, name: Optional[str], started: Optional[datetime]) -> None:
+        """Update the analytics view run indicator.
+
+        Args:
+            name: The active run name, or None to clear.
+            started: The run start time, or None to clear.
+        """
+        try:
+            tabbed = self.query_one(TabbedContent)
+            analytics_pane = tabbed.get_pane("analytics")
+            for child in analytics_pane.walk_children():
+                if hasattr(child, "set_run_state"):
+                    child.set_run_state(name, started)
+                    break
+        except Exception:
+            pass
+
+    def action_show_run_list(self) -> None:
+        """Show the list of saved runs."""
+        self.notify("Run list not yet implemented", severity="warning")
 
     # -- error display -------------------------------------------------------
 
