@@ -11,6 +11,7 @@ from typing import List
 from unittest import mock
 
 
+from dbxtop.analytics.accumulator import AccumulatedInsight
 from dbxtop.analytics.engine import AnalyticsEngine
 from dbxtop.analytics.models import (
     DiagnosticReport,
@@ -28,6 +29,20 @@ from dbxtop.api.models import (
     SparkStage,
     StageStatus,
 )
+
+
+def _wrap_insight(insight: Insight) -> AccumulatedInsight:
+    """Wrap a raw Insight in an AccumulatedInsight for view tests."""
+    now = datetime.now(timezone.utc)
+    return AccumulatedInsight(
+        insight=insight,
+        first_seen=now,
+        last_seen=now,
+        resolved_at=None,
+        peak_severity=insight.severity,
+        occurrence_count=1,
+        peak_metric_value=insight.metric_value,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -550,21 +565,23 @@ class TestAnalyticsViewPanelRendering:
         from dbxtop.views.analytics import AnalyticsView
 
         view = AnalyticsView()
-        insights = [
-            Insight(
-                id="GC_001",
-                category=InsightCategory.GC,
-                severity=Severity.CRITICAL,
-                title="High GC pressure on executor 3 (12.5%)",
-                description="Executor 3 is spending 12.5% of total time in GC.",
-                metric_value=12.5,
-                threshold_value=10.0,
-                recommendation="Increase spark.executor.memory.",
-                affected_entity="3",
+        accumulated = [
+            _wrap_insight(
+                Insight(
+                    id="GC_001",
+                    category=InsightCategory.GC,
+                    severity=Severity.CRITICAL,
+                    title="High GC pressure on executor 3 (12.5%)",
+                    description="Executor 3 is spending 12.5% of total time in GC.",
+                    metric_value=12.5,
+                    threshold_value=10.0,
+                    recommendation="Increase spark.executor.memory.",
+                    affected_entity="3",
+                )
             ),
         ]
 
-        result = view._render_issues_panel(insights)
+        result = view._render_issues_panel(accumulated)
         assert "High GC pressure" in result, "Issues panel should show insight title"
         assert "red" in result.lower(), "CRITICAL insights should use red styling"
 
@@ -573,21 +590,23 @@ class TestAnalyticsViewPanelRendering:
         from dbxtop.views.analytics import AnalyticsView
 
         view = AnalyticsView()
-        insights = [
-            Insight(
-                id="SPILL_001",
-                category=InsightCategory.SPILL,
-                severity=Severity.WARNING,
-                title="Memory spill on stage 5",
-                description="Stage 5 is spilling data to disk.",
-                metric_value=2_000_000_000.0,
-                threshold_value=0.0,
-                recommendation="Increase partition count.",
-                affected_entity="stage_5",
+        accumulated = [
+            _wrap_insight(
+                Insight(
+                    id="SPILL_001",
+                    category=InsightCategory.SPILL,
+                    severity=Severity.WARNING,
+                    title="Memory spill on stage 5",
+                    description="Stage 5 is spilling data to disk.",
+                    metric_value=2_000_000_000.0,
+                    threshold_value=0.0,
+                    recommendation="Increase partition count.",
+                    affected_entity="stage_5",
+                )
             ),
         ]
 
-        result = view._render_issues_panel(insights)
+        result = view._render_issues_panel(accumulated)
         assert "Memory spill" in result
         assert "yellow" in result.lower(), "WARNING insights should use yellow styling"
 
@@ -596,21 +615,23 @@ class TestAnalyticsViewPanelRendering:
         from dbxtop.views.analytics import AnalyticsView
 
         view = AnalyticsView()
-        insights = [
-            Insight(
-                id="UTIL_001",
-                category=InsightCategory.UTILIZATION,
-                severity=Severity.INFO,
-                title="Low cluster utilization (45%)",
-                description="Only 45% of slots active.",
-                metric_value=45.0,
-                threshold_value=70.0,
-                recommendation="Consider reducing workers.",
-                affected_entity="",
+        accumulated = [
+            _wrap_insight(
+                Insight(
+                    id="UTIL_001",
+                    category=InsightCategory.UTILIZATION,
+                    severity=Severity.INFO,
+                    title="Low cluster utilization (45%)",
+                    description="Only 45% of slots active.",
+                    metric_value=45.0,
+                    threshold_value=70.0,
+                    recommendation="Consider reducing workers.",
+                    affected_entity="",
+                )
             ),
         ]
 
-        result = view._render_issues_panel(insights)
+        result = view._render_issues_panel(accumulated)
         assert "Low cluster utilization" in result
         assert "dim" in result.lower(), "INFO insights should use dim styling"
 
@@ -629,7 +650,7 @@ class TestAnalyticsViewPanelRendering:
         view = AnalyticsView()
         report = _make_unhealthy_report()
 
-        result = view._render_issues_panel(report.insights)
+        result = view._render_issues_panel([_wrap_insight(i) for i in report.insights])
         assert "High GC pressure" in result
         assert "Memory spill" in result
         assert "Low cluster utilization" in result
@@ -781,7 +802,7 @@ class TestAnalyticsViewEngineIntegration:
 
         view = AnalyticsView()
         health_text = view._render_health_panel(report.health)
-        issues_text = view._render_issues_panel(report.insights)
+        issues_text = view._render_issues_panel([_wrap_insight(i) for i in report.insights])
         view._render_recommendations_panel(report.recommendations)
 
         assert str(report.health.score) in health_text
@@ -805,7 +826,7 @@ class TestAnalyticsViewEngineIntegration:
         assert len(report.insights) > 0
 
         view = AnalyticsView()
-        issues_text = view._render_issues_panel(report.insights)
+        issues_text = view._render_issues_panel([_wrap_insight(i) for i in report.insights])
         assert "GC" in issues_text.upper() or "gc" in issues_text.lower()
 
     def test_spill_renders_in_issues(self) -> None:
@@ -827,7 +848,7 @@ class TestAnalyticsViewEngineIntegration:
         assert report is not None
 
         view = AnalyticsView()
-        issues_text = view._render_issues_panel(report.insights)
+        issues_text = view._render_issues_panel([_wrap_insight(i) for i in report.insights])
         # Should mention spill in some form
         spill_mentioned = "spill" in issues_text.lower() or "SPILL" in issues_text
         assert spill_mentioned, f"Spill insight should appear in issues panel, got: {issues_text[:200]}"
