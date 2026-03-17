@@ -140,9 +140,12 @@ class StagesView(BaseView):
         submitted = format_timestamp(stage.submission_time)
         completed = format_timestamp(stage.completion_time) if stage.completion_time else "running"
 
+        # Escape brackets in data values to prevent Rich markup parsing errors
+        name = stage.name.replace("[", "\\[")
+
         return (
             f"[bold]Stage {stage.stage_id} (attempt {stage.attempt_id})[/bold]\n\n"
-            f"  Name:        {stage.name}\n"
+            f"  Name:        {name}\n"
             f"  Status:      {stage.status.value}\n"
             f"  Submitted:   {submitted}\n"
             f"  Completed:   {completed}\n\n"
