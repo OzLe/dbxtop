@@ -22,7 +22,7 @@ _VIEW_BINDINGS: dict[str, str] = {
     "storage": "s:Sort",
 }
 
-_GLOBAL_HINTS = "1-7:Views | r:Refresh | /:Filter | ?:Help | q:Quit"
+_GLOBAL_HINTS = "1-7:Views | r:Refresh | /:Filter | ^R:Record | ^L:Runs | ?:Help | q:Quit"
 
 
 class KeyboardFooter(Static):
