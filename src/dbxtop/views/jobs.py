@@ -65,6 +65,7 @@ class JobsView(BaseView):
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render the jobs table from cache."""
         slot = cache.get("spark_jobs")
+        self.update_stale_status(slot, "jobs-table")
         jobs: Optional[List[SparkJob]] = slot.data
         if jobs is None:
             return

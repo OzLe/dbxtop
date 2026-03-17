@@ -61,6 +61,7 @@ class SQLView(BaseView):
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render SQL queries table from cache."""
         slot = cache.get("sql_queries")
+        self.update_stale_status(slot, "sql-table")
         queries: Optional[List[SQLQuery]] = slot.data
         if queries is None:
             return

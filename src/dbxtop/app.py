@@ -633,12 +633,15 @@ class DbxTopApp(App[None]):
 
             self._run_manager = RunManager(self._cluster_id)
 
-        # Capture Spark config snapshot from the cluster cache slot
+        # Capture Spark config snapshot from the cluster cache slot,
+        # filtering out keys that may contain sensitive values.
         config_snapshot: dict[str, str] = {}
         if self._cache:
             cluster_slot = self._cache.get("cluster")
             if cluster_slot.data is not None:
-                config_snapshot = dict(cluster_slot.data.spark_conf)
+                from dbxtop.analytics.run_manager import filter_sensitive_config
+
+                config_snapshot = filter_sensitive_config(dict(cluster_slot.data.spark_conf))
 
         run = self._run_manager.start_run(name, config_snapshot)
         self._set_analytics_run_state(name, run.started_at)
@@ -663,7 +666,11 @@ class DbxTopApp(App[None]):
 
     def action_show_run_list(self) -> None:
         """Show the list of saved runs."""
-        self.notify("Run list not yet implemented", severity="warning")
+        from dbxtop.analytics.run_manager import RunManager
+        from dbxtop.views.run_list import RunListScreen
+
+        runs = RunManager.list_runs(self._cluster_id)
+        self.push_screen(RunListScreen(runs))
 
     # -- error display -------------------------------------------------------
 
