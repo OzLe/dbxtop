@@ -6,7 +6,7 @@ in a compact top-of-screen bar.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from textual.reactive import reactive
 from textual.widgets import Static
@@ -48,7 +48,7 @@ class ClusterHeader(Static):
         self,
         profile: str = "",
         poll_interval: float = 3.0,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__("dbxtop | connecting...", **kwargs)
         self._profile = profile

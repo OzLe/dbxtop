@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -154,14 +154,14 @@ class RunComparisonScreen(ModalScreen[None]):
     }
     """
 
-    def __init__(self, comparison: RunComparison, **kwargs: object) -> None:
+    def __init__(self, comparison: RunComparison, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._comp = comparison
 
     def compose(self) -> ComposeResult:
-        yield Static(self._render(), id="comparison-container")
+        yield Static(self._render_comparison(), id="comparison-container")
 
-    def _render(self) -> str:
+    def _render_comparison(self) -> str:
         """Render the full comparison as Rich markup."""
         c = self._comp
         lines: List[str] = []
