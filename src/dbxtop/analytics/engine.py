@@ -9,6 +9,7 @@ mutation.
 from __future__ import annotations
 
 import statistics
+from collections import deque
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -20,10 +21,12 @@ from dbxtop.analytics.models import (
     Recommendation,
     Severity,
 )
+from dbxtop.api.cache import DataCache
 from dbxtop.api.models import (
     ClusterInfo,
     ExecutorInfo,
     JobStatus,
+    RDDInfo,
     SQLQuery,
     SparkJob,
     SparkStage,
@@ -79,15 +82,69 @@ MEMORY_CRITICAL_PCT: float = 95.0  # > 95% memory used -> CRITICAL
 PEAK_HEAP_WARNING_PCT: float = 85.0  # peak_jvm_heap > 85% max_memory -> WARNING
 PEAK_HEAP_CRITICAL_PCT: float = 95.0  # peak_jvm_heap > 95% max_memory -> CRITICAL
 
+# -- Phase A thresholds --
+EXECUTOR_HEAP_WARNING_BYTES: int = 64 * 1024**3  # 64 GB
+EXECUTOR_CORES_WARNING: int = 8
+MEMORY_PER_CORE_WARNING_BYTES: int = 2 * 1024**3  # 2 GB per core
+DRIVER_GC_RATIO_FACTOR: float = 2.0  # driver GC > 2x avg worker
+DRIVER_MEMORY_CRITICAL_PCT: float = 95.0
+
+# -- Phase B thresholds --
+SMALL_FILE_BYTES_PER_TASK: int = 1_048_576  # 1 MB
+SMALL_FILE_MIN_TASKS: int = 100
+CPU_EFFICIENCY_IO_BOUND: float = 0.3
+CPU_EFFICIENCY_CPU_BOUND: float = 0.7
+SQL_ANOMALY_WARNING_FACTOR: float = 5.0
+SQL_ANOMALY_CRITICAL_FACTOR: float = 10.0
+SQL_ANOMALY_MIN_DURATION_MS: int = 60_000
+SQL_LONG_RUNNING_MS: int = 600_000
+
+# -- Phase C thresholds --
+JOIN_SHUFFLE_INPUT_RATIO: float = 5.0
+JOIN_SMALL_INPUT_BYTES: int = 104_857_600  # 100 MB
+CACHE_PARTIAL_THRESHOLD: float = 0.5
+CACHE_MEMORY_WARNING_PCT: float = 60.0
+EXECUTOR_COUNT_COV_WARNING: float = 0.3
+
 # Health score weights
 HEALTH_WEIGHTS: Dict[str, float] = {
-    "gc": 0.25,
-    "spill": 0.20,
-    "skew": 0.20,
-    "utilization": 0.15,
-    "shuffle": 0.10,
-    "task_failures": 0.10,
+    "gc": 0.18,
+    "spill": 0.15,
+    "skew": 0.15,
+    "utilization": 0.12,
+    "shuffle": 0.08,
+    "task_failures": 0.08,
+    "config": 0.08,
+    "driver": 0.06,
+    "io_efficiency": 0.05,
+    "stability": 0.05,
 }
+
+
+def _parse_byte_string(s: str) -> Optional[int]:
+    """Parse Spark byte config strings like '64MB', '1g', '256m' to bytes."""
+    s = s.strip().lower()
+    multipliers = {
+        "b": 1,
+        "k": 1024,
+        "kb": 1024,
+        "m": 1024**2,
+        "mb": 1024**2,
+        "g": 1024**3,
+        "gb": 1024**3,
+        "t": 1024**4,
+        "tb": 1024**4,
+    }
+    for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
+        if s.endswith(suffix):
+            try:
+                return int(float(s[: -len(suffix)]) * mult)
+            except ValueError:
+                return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
 
 
 class AnalyticsEngine:
@@ -872,6 +929,1195 @@ class AnalyticsEngine:
         return insights
 
     # ------------------------------------------------------------------
+    # Detector: AQE Configuration (Phase A)
+    # ------------------------------------------------------------------
+
+    def detect_aqe_config(self, cluster: Optional[ClusterInfo]) -> List[Insight]:
+        """Detect suboptimal Adaptive Query Execution configuration.
+
+        Args:
+            cluster: Cluster info, or None if unavailable.
+
+        Returns:
+            Insights for AQE misconfigurations.
+        """
+        if cluster is None:
+            return []
+
+        insights: List[Insight] = []
+        conf = cluster.spark_conf
+
+        aqe_enabled = conf.get("spark.sql.adaptive.enabled", "true").lower()
+        if aqe_enabled == "false":
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.AQE_CONFIG),
+                    category=InsightCategory.AQE_CONFIG,
+                    severity=Severity.CRITICAL,
+                    title="AQE is disabled",
+                    description=(
+                        "Adaptive Query Execution is disabled. AQE dynamically optimizes "
+                        "query plans at runtime, including partition coalescing and skew handling."
+                    ),
+                    metric_value=0.0,
+                    threshold_value=1.0,
+                    recommendation=(
+                        "Enable AQE: set spark.sql.adaptive.enabled=true. "
+                        "AQE is enabled by default since Spark 3.2 and provides significant "
+                        "performance improvements for most workloads."
+                    ),
+                    affected_entity="",
+                )
+            )
+            return insights
+
+        # AQE is enabled — check sub-features
+        coalesce_enabled = conf.get("spark.sql.adaptive.coalescePartitions.enabled", "true").lower()
+        if coalesce_enabled == "false":
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.AQE_CONFIG),
+                    category=InsightCategory.AQE_CONFIG,
+                    severity=Severity.WARNING,
+                    title="AQE partition coalescing disabled",
+                    description=(
+                        "AQE partition coalescing is disabled. This feature merges small "
+                        "post-shuffle partitions to reduce task overhead."
+                    ),
+                    metric_value=0.0,
+                    threshold_value=1.0,
+                    recommendation=(
+                        "Enable partition coalescing: set spark.sql.adaptive.coalescePartitions.enabled=true."
+                    ),
+                    affected_entity="",
+                )
+            )
+
+        skew_enabled = conf.get("spark.sql.adaptive.skewJoin.enabled", "true").lower()
+        if skew_enabled == "false":
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.AQE_CONFIG),
+                    category=InsightCategory.AQE_CONFIG,
+                    severity=Severity.WARNING,
+                    title="AQE skew join optimization disabled",
+                    description=(
+                        "AQE skew join handling is disabled. This feature splits skewed "
+                        "partitions to prevent straggler tasks during joins."
+                    ),
+                    metric_value=0.0,
+                    threshold_value=1.0,
+                    recommendation=("Enable skew join optimization: set spark.sql.adaptive.skewJoin.enabled=true."),
+                    affected_entity="",
+                )
+            )
+
+        # Check advisory partition size
+        advisory_raw = conf.get("spark.sql.adaptive.advisoryPartitionSizeInBytes", "")
+        if advisory_raw:
+            advisory_bytes = _parse_byte_string(advisory_raw)
+            if advisory_bytes is not None and advisory_bytes < 32 * 1024**2:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.AQE_CONFIG),
+                        category=InsightCategory.AQE_CONFIG,
+                        severity=Severity.INFO,
+                        title=f"AQE advisory partition size is small ({format_bytes(advisory_bytes)})",
+                        description=(
+                            f"The AQE advisory partition size is {format_bytes(advisory_bytes)}, "
+                            f"below the recommended minimum of 32 MB. This may create too many "
+                            f"small partitions."
+                        ),
+                        metric_value=float(advisory_bytes),
+                        threshold_value=float(32 * 1024**2),
+                        recommendation=(
+                            "Increase spark.sql.adaptive.advisoryPartitionSizeInBytes to at least "
+                            "32MB (e.g. '64MB') for better partition sizing."
+                        ),
+                        affected_entity="",
+                    )
+                )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Serialization (Phase A)
+    # ------------------------------------------------------------------
+
+    def detect_serialization(
+        self,
+        cluster: Optional[ClusterInfo],
+        executors: List[ExecutorInfo],
+    ) -> List[Insight]:
+        """Detect suboptimal serialization configuration.
+
+        Args:
+            cluster: Cluster info, or None if unavailable.
+            executors: List of executor info objects.
+
+        Returns:
+            Insights for serialization issues.
+        """
+        if cluster is None:
+            return []
+
+        serializer = cluster.spark_conf.get("spark.serializer", "org.apache.spark.serializer.JavaSerializer")
+        if "kryo" in serializer.lower():
+            return []
+
+        active_non_driver = [e for e in executors if e.is_active and not e.is_driver and e.total_duration_ms > 0]
+        if not active_non_driver:
+            return []
+
+        avg_gc = statistics.mean([e.gc_ratio for e in active_non_driver])
+        total_shuffle = sum(e.total_shuffle_read + e.total_shuffle_write for e in active_non_driver)
+
+        if avg_gc >= GC_CRITICAL_RATIO:
+            severity = Severity.CRITICAL
+        elif avg_gc >= GC_WARNING_RATIO or total_shuffle > 10 * 1024**3:
+            severity = Severity.WARNING
+        else:
+            return []
+
+        return [
+            Insight(
+                id=self._next_id(InsightCategory.SERIALIZATION),
+                category=InsightCategory.SERIALIZATION,
+                severity=severity,
+                title="Java serialization in use (Kryo recommended)",
+                description=(
+                    f"The cluster is using Java serialization with {avg_gc * 100:.1f}% avg GC "
+                    f"and {format_bytes(total_shuffle)} total shuffle. Kryo serialization is "
+                    f"typically 2-10x faster and more compact."
+                ),
+                metric_value=avg_gc * 100.0,
+                threshold_value=GC_WARNING_RATIO * 100.0,
+                recommendation=(
+                    "Switch to Kryo serialization: set "
+                    "spark.serializer=org.apache.spark.serializer.KryoSerializer. "
+                    "Register custom classes with spark.kryo.classesToRegister for best results."
+                ),
+                affected_entity="",
+            )
+        ]
+
+    # ------------------------------------------------------------------
+    # Detector: Executor Sizing (Phase A)
+    # ------------------------------------------------------------------
+
+    def detect_executor_sizing(self, executors: List[ExecutorInfo]) -> List[Insight]:
+        """Detect suboptimal executor memory and core sizing.
+
+        Args:
+            executors: List of executor info objects.
+
+        Returns:
+            Insights for oversized or poorly balanced executors.
+        """
+        active_non_driver = [e for e in executors if e.is_active and not e.is_driver]
+        if not active_non_driver:
+            return []
+
+        # All executors typically have the same sizing; use the first one
+        e = active_non_driver[0]
+        insights: List[Insight] = []
+
+        if e.max_memory > EXECUTOR_HEAP_WARNING_BYTES:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.EXECUTOR_SIZING),
+                    category=InsightCategory.EXECUTOR_SIZING,
+                    severity=Severity.WARNING,
+                    title=f"Large executor heap ({format_bytes(e.max_memory)})",
+                    description=(
+                        f"Executor heap is {format_bytes(e.max_memory)}, exceeding the "
+                        f"recommended maximum of {format_bytes(EXECUTOR_HEAP_WARNING_BYTES)}. "
+                        f"Large heaps increase GC pause times."
+                    ),
+                    metric_value=float(e.max_memory),
+                    threshold_value=float(EXECUTOR_HEAP_WARNING_BYTES),
+                    recommendation=(
+                        "Use more executors with smaller heaps (e.g. 16-32 GB each) instead "
+                        "of fewer large executors. This reduces GC pause times."
+                    ),
+                    affected_entity=e.executor_id,
+                )
+            )
+
+        if e.total_cores > EXECUTOR_CORES_WARNING:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.EXECUTOR_SIZING),
+                    category=InsightCategory.EXECUTOR_SIZING,
+                    severity=Severity.WARNING,
+                    title=f"High core count per executor ({e.total_cores} cores)",
+                    description=(
+                        f"Each executor has {e.total_cores} cores, exceeding the recommended "
+                        f"maximum of {EXECUTOR_CORES_WARNING}. Too many cores per executor "
+                        f"increases HDFS throughput contention."
+                    ),
+                    metric_value=float(e.total_cores),
+                    threshold_value=float(EXECUTOR_CORES_WARNING),
+                    recommendation=(
+                        "Reduce spark.executor.cores to 4-5 and increase the number of "
+                        "executors for better parallelism and reduced contention."
+                    ),
+                    affected_entity=e.executor_id,
+                )
+            )
+
+        if e.total_cores > 0 and e.max_memory / e.total_cores < MEMORY_PER_CORE_WARNING_BYTES:
+            mem_per_core = e.max_memory / e.total_cores
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.EXECUTOR_SIZING),
+                    category=InsightCategory.EXECUTOR_SIZING,
+                    severity=Severity.WARNING,
+                    title=f"Low memory per core ({format_bytes(int(mem_per_core))}/core)",
+                    description=(
+                        f"Memory per core is {format_bytes(int(mem_per_core))}, below the "
+                        f"recommended minimum of {format_bytes(MEMORY_PER_CORE_WARNING_BYTES)}. "
+                        f"This may cause excessive spill to disk."
+                    ),
+                    metric_value=mem_per_core,
+                    threshold_value=float(MEMORY_PER_CORE_WARNING_BYTES),
+                    recommendation=(
+                        "Increase spark.executor.memory or decrease spark.executor.cores "
+                        "to provide at least 2 GB of memory per core."
+                    ),
+                    affected_entity=e.executor_id,
+                )
+            )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Driver Bottleneck (Phase A)
+    # ------------------------------------------------------------------
+
+    def detect_driver_bottleneck(self, executors: List[ExecutorInfo]) -> List[Insight]:
+        """Detect driver resource bottlenecks relative to workers.
+
+        Args:
+            executors: List of executor info objects.
+
+        Returns:
+            Insights for driver GC or memory issues.
+        """
+        driver = None
+        workers: List[ExecutorInfo] = []
+        for e in executors:
+            if not e.is_active:
+                continue
+            if e.is_driver:
+                driver = e
+            else:
+                workers.append(e)
+
+        if driver is None or not workers:
+            return []
+
+        insights: List[Insight] = []
+
+        # Driver GC check
+        worker_gc_ratios = [w.gc_ratio for w in workers if w.total_duration_ms > 0]
+        if worker_gc_ratios and driver.total_duration_ms > 0:
+            avg_worker_gc = statistics.mean(worker_gc_ratios)
+            if driver.gc_ratio > DRIVER_GC_RATIO_FACTOR * avg_worker_gc and driver.gc_ratio > 0.05:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.DRIVER_BOTTLENECK),
+                        category=InsightCategory.DRIVER_BOTTLENECK,
+                        severity=Severity.WARNING,
+                        title=f"Driver GC pressure ({driver.gc_ratio * 100:.1f}% vs {avg_worker_gc * 100:.1f}% avg worker)",
+                        description=(
+                            f"The driver GC ratio ({driver.gc_ratio * 100:.1f}%) is more than "
+                            f"{DRIVER_GC_RATIO_FACTOR:.0f}x the average worker GC ratio "
+                            f"({avg_worker_gc * 100:.1f}%). This may indicate the driver is "
+                            f"collecting too much data or holding large broadcast variables."
+                        ),
+                        metric_value=driver.gc_ratio * 100.0,
+                        threshold_value=avg_worker_gc * DRIVER_GC_RATIO_FACTOR * 100.0,
+                        recommendation=(
+                            "Increase spark.driver.memory. Avoid collecting large datasets "
+                            "to the driver. Use .show() or .take() instead of .collect(). "
+                            "Reduce broadcast variable sizes."
+                        ),
+                        affected_entity="driver",
+                    )
+                )
+
+        # Driver memory check
+        if driver.memory_used_pct > DRIVER_MEMORY_CRITICAL_PCT:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.DRIVER_BOTTLENECK),
+                    category=InsightCategory.DRIVER_BOTTLENECK,
+                    severity=Severity.CRITICAL,
+                    title=f"Driver memory critical ({driver.memory_used_pct:.1f}%)",
+                    description=(
+                        f"The driver is using {driver.memory_used_pct:.1f}% of its available "
+                        f"memory ({format_bytes(driver.memory_used)} / "
+                        f"{format_bytes(driver.max_memory)}). This may cause OOM errors."
+                    ),
+                    metric_value=driver.memory_used_pct,
+                    threshold_value=DRIVER_MEMORY_CRITICAL_PCT,
+                    recommendation=(
+                        "Increase spark.driver.memory. Avoid collecting large datasets to "
+                        "the driver with .collect(). Use .show(), .take(), or write results "
+                        "to storage instead."
+                    ),
+                    affected_entity="driver",
+                )
+            )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Config Anti-Patterns (Phase A)
+    # ------------------------------------------------------------------
+
+    def detect_config_anti_patterns(
+        self,
+        cluster: Optional[ClusterInfo],
+        executors: List[ExecutorInfo],
+    ) -> List[Insight]:
+        """Detect common Spark configuration anti-patterns.
+
+        Args:
+            cluster: Cluster info, or None if unavailable.
+            executors: List of executor info objects.
+
+        Returns:
+            Insights for configuration anti-patterns.
+        """
+        if cluster is None:
+            return []
+
+        insights: List[Insight] = []
+        conf = cluster.spark_conf
+
+        # Check shuffle.partitions vs total cores
+        total_cores = sum(e.total_cores for e in executors if e.is_active)
+        shuffle_partitions_str = conf.get("spark.sql.shuffle.partitions", "200")
+        try:
+            shuffle_partitions = int(shuffle_partitions_str)
+        except ValueError:
+            shuffle_partitions = 200
+
+        coalesce_enabled = conf.get("spark.sql.adaptive.coalescePartitions.enabled", "true").lower()
+        if total_cores > 0 and shuffle_partitions > 10 * total_cores and coalesce_enabled == "false":
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.CONFIG_ANTI_PATTERN),
+                    category=InsightCategory.CONFIG_ANTI_PATTERN,
+                    severity=Severity.WARNING,
+                    title=f"Excessive shuffle partitions ({shuffle_partitions} vs {total_cores} cores)",
+                    description=(
+                        f"spark.sql.shuffle.partitions={shuffle_partitions} is more than 10x "
+                        f"the total core count ({total_cores}) and AQE coalescing is disabled. "
+                        f"This creates excessive task scheduling overhead."
+                    ),
+                    metric_value=float(shuffle_partitions),
+                    threshold_value=float(10 * total_cores),
+                    recommendation=(
+                        "Either reduce spark.sql.shuffle.partitions to 2-3x core count, "
+                        "or enable AQE partition coalescing: "
+                        "spark.sql.adaptive.coalescePartitions.enabled=true."
+                    ),
+                    affected_entity="",
+                )
+            )
+
+        # Check memory.fraction out of [0.4, 0.8]
+        mem_fraction_str = conf.get("spark.memory.fraction", "0.6")
+        try:
+            mem_fraction = float(mem_fraction_str)
+        except ValueError:
+            mem_fraction = 0.6
+
+        if mem_fraction < 0.4 or mem_fraction > 0.8:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.CONFIG_ANTI_PATTERN),
+                    category=InsightCategory.CONFIG_ANTI_PATTERN,
+                    severity=Severity.INFO,
+                    title=f"Unusual memory fraction ({mem_fraction:.2f})",
+                    description=(
+                        f"spark.memory.fraction={mem_fraction:.2f} is outside the typical "
+                        f"range of [0.4, 0.8]. The default is 0.6."
+                    ),
+                    metric_value=mem_fraction,
+                    threshold_value=0.6,
+                    recommendation=(
+                        "Consider using the default spark.memory.fraction=0.6 unless you "
+                        "have specific requirements for more user memory or execution memory."
+                    ),
+                    affected_entity="",
+                )
+            )
+
+        # Check memory.storageFraction > 0.7
+        storage_fraction_str = conf.get("spark.memory.storageFraction", "0.5")
+        try:
+            storage_fraction = float(storage_fraction_str)
+        except ValueError:
+            storage_fraction = 0.5
+
+        if storage_fraction > 0.7:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.CONFIG_ANTI_PATTERN),
+                    category=InsightCategory.CONFIG_ANTI_PATTERN,
+                    severity=Severity.WARNING,
+                    title=f"High storage fraction ({storage_fraction:.2f})",
+                    description=(
+                        f"spark.memory.storageFraction={storage_fraction:.2f} reserves more "
+                        f"than 70% of unified memory for caching, leaving little room for "
+                        f"execution (shuffles, joins, sorts)."
+                    ),
+                    metric_value=storage_fraction,
+                    threshold_value=0.7,
+                    recommendation=(
+                        "Reduce spark.memory.storageFraction to 0.5 (default) unless you "
+                        "have a caching-heavy workload. High storage fractions can cause "
+                        "execution spill to disk."
+                    ),
+                    affected_entity="",
+                )
+            )
+
+        # Check autoBroadcastJoinThreshold == "-1"
+        broadcast_threshold = conf.get("spark.sql.autoBroadcastJoinThreshold", "10485760")
+        if broadcast_threshold.strip() == "-1":
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.CONFIG_ANTI_PATTERN),
+                    category=InsightCategory.CONFIG_ANTI_PATTERN,
+                    severity=Severity.INFO,
+                    title="Auto broadcast join disabled",
+                    description=(
+                        "spark.sql.autoBroadcastJoinThreshold is set to -1, disabling "
+                        "automatic broadcast joins. This forces all joins to use shuffle, "
+                        "which may be slower for small-to-large table joins."
+                    ),
+                    metric_value=-1.0,
+                    threshold_value=0.0,
+                    recommendation=(
+                        "Re-enable auto broadcast joins: set "
+                        "spark.sql.autoBroadcastJoinThreshold=10485760 (10 MB default) "
+                        "to allow the optimizer to broadcast small tables automatically."
+                    ),
+                    affected_entity="",
+                )
+            )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Photon Opportunity (Phase A)
+    # ------------------------------------------------------------------
+
+    def detect_photon_opportunity(
+        self,
+        cluster: Optional[ClusterInfo],
+        sql_queries: Optional[List[SQLQuery]],
+    ) -> List[Insight]:
+        """Detect opportunities to use Photon runtime for SQL-heavy workloads.
+
+        Args:
+            cluster: Cluster info, or None if unavailable.
+            sql_queries: List of SQL queries, or None.
+
+        Returns:
+            Insights for Photon upgrade opportunities.
+        """
+        if cluster is None:
+            return []
+
+        # If already using Photon, nothing to suggest
+        if cluster.runtime_engine and "PHOTON" in cluster.runtime_engine.upper():
+            return []
+
+        queries = sql_queries or []
+        if not queries:
+            return []
+
+        completed = [q for q in queries if q.duration_ms > 0]
+        if not completed:
+            return []
+
+        query_count = len(completed)
+        avg_duration_s = statistics.mean([q.duration_ms for q in completed]) / 1000.0
+
+        if query_count > 20 and avg_duration_s > 60.0:
+            severity = Severity.WARNING
+        elif query_count > 5:
+            severity = Severity.INFO
+        else:
+            return []
+
+        return [
+            Insight(
+                id=self._next_id(InsightCategory.PHOTON_OPPORTUNITY),
+                category=InsightCategory.PHOTON_OPPORTUNITY,
+                severity=severity,
+                title=f"Photon runtime may improve SQL performance ({query_count} queries)",
+                description=(
+                    f"This cluster is running {query_count} SQL queries with an average "
+                    f"duration of {avg_duration_s:.1f}s on the standard runtime. Photon "
+                    f"can accelerate SQL and DataFrame workloads by 2-8x."
+                ),
+                metric_value=float(query_count),
+                threshold_value=5.0,
+                recommendation=(
+                    "Switch to a Photon-enabled runtime (e.g. Photon Runtime). "
+                    "Photon provides native vectorized execution for SQL, joins, "
+                    "aggregations, and file I/O."
+                ),
+                affected_entity="",
+            )
+        ]
+
+    # ------------------------------------------------------------------
+    # Detector: I/O Patterns (Phase B)
+    # ------------------------------------------------------------------
+
+    def detect_io_patterns(self, stages: List[SparkStage]) -> List[Insight]:
+        """Detect small file / partition problems and I/O-bound stages.
+
+        Args:
+            stages: List of Spark stage objects.
+
+        Returns:
+            Insights for I/O pattern issues.
+        """
+        insights: List[Insight] = []
+
+        for s in stages:
+            if s.status not in (StageStatus.ACTIVE, StageStatus.COMPLETE):
+                continue
+            if s.input_bytes <= 0 or s.num_tasks <= 0:
+                continue
+
+            bytes_per_task = s.input_bytes / s.num_tasks
+
+            # Small file/partition detection
+            if bytes_per_task < SMALL_FILE_BYTES_PER_TASK and s.num_tasks > SMALL_FILE_MIN_TASKS:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.IO_PATTERN),
+                        category=InsightCategory.IO_PATTERN,
+                        severity=Severity.WARNING,
+                        title=f"Small file/partition problem on stage {s.stage_id}",
+                        description=(
+                            f"Stage {s.stage_id} has {s.num_tasks} tasks processing only "
+                            f"{format_bytes(int(bytes_per_task))} each "
+                            f"({format_bytes(s.input_bytes)} total). This pattern indicates "
+                            f"too many small files or partitions."
+                        ),
+                        metric_value=bytes_per_task,
+                        threshold_value=float(SMALL_FILE_BYTES_PER_TASK),
+                        recommendation=(
+                            "Compact small files using OPTIMIZE or coalesce(). "
+                            "Enable AQE partition coalescing: "
+                            "spark.sql.adaptive.coalescePartitions.enabled=true."
+                        ),
+                        affected_entity=f"stage_{s.stage_id}",
+                    )
+                )
+
+            # I/O bound detection via CPU efficiency
+            if s.executor_run_time_ms > 0:
+                cpu_efficiency = s.executor_cpu_time_ns / (s.executor_run_time_ms * 1_000_000)
+                if cpu_efficiency < CPU_EFFICIENCY_IO_BOUND and s.input_bytes > 0:
+                    insights.append(
+                        Insight(
+                            id=self._next_id(InsightCategory.IO_PATTERN),
+                            category=InsightCategory.IO_PATTERN,
+                            severity=Severity.WARNING,
+                            title=f"I/O bound stage {s.stage_id} (CPU efficiency {cpu_efficiency:.0%})",
+                            description=(
+                                f"Stage {s.stage_id} has {cpu_efficiency:.0%} CPU efficiency, "
+                                f"meaning most time is spent waiting for I/O rather than computing."
+                            ),
+                            metric_value=cpu_efficiency,
+                            threshold_value=CPU_EFFICIENCY_IO_BOUND,
+                            recommendation=(
+                                "Consider caching frequently read data, using columnar formats "
+                                "(Parquet/Delta), or increasing I/O parallelism. "
+                                "Check for remote storage latency."
+                            ),
+                            affected_entity=f"stage_{s.stage_id}",
+                        )
+                    )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: CPU/IO Classification (Phase B)
+    # ------------------------------------------------------------------
+
+    def detect_cpu_io_classification(self, stages: List[SparkStage]) -> List[Insight]:
+        """Classify the overall workload as CPU-bound or I/O-bound.
+
+        Args:
+            stages: List of Spark stage objects.
+
+        Returns:
+            At most one insight classifying the workload.
+        """
+        active = [s for s in stages if s.status == StageStatus.ACTIVE and s.executor_run_time_ms > 0]
+        if not active:
+            return []
+
+        efficiencies = [s.executor_cpu_time_ns / (s.executor_run_time_ms * 1_000_000) for s in active]
+        avg_efficiency = statistics.mean(efficiencies)
+
+        if avg_efficiency > CPU_EFFICIENCY_CPU_BOUND:
+            return [
+                Insight(
+                    id=self._next_id(InsightCategory.CPU_IO_BOUND),
+                    category=InsightCategory.CPU_IO_BOUND,
+                    severity=Severity.INFO,
+                    title=f"CPU-bound workload (avg CPU efficiency {avg_efficiency:.0%})",
+                    description=(
+                        f"Active stages have an average CPU efficiency of {avg_efficiency:.0%}, "
+                        f"indicating a compute-intensive workload."
+                    ),
+                    metric_value=avg_efficiency,
+                    threshold_value=CPU_EFFICIENCY_CPU_BOUND,
+                    recommendation=(
+                        "For CPU-bound workloads, add more cores or enable Photon runtime. "
+                        "Consider optimizing UDFs or switching to built-in Spark functions."
+                    ),
+                    affected_entity="",
+                )
+            ]
+        elif avg_efficiency < CPU_EFFICIENCY_IO_BOUND:
+            return [
+                Insight(
+                    id=self._next_id(InsightCategory.CPU_IO_BOUND),
+                    category=InsightCategory.CPU_IO_BOUND,
+                    severity=Severity.INFO,
+                    title=f"I/O-bound workload (avg CPU efficiency {avg_efficiency:.0%})",
+                    description=(
+                        f"Active stages have an average CPU efficiency of {avg_efficiency:.0%}, "
+                        f"indicating most time is spent on I/O rather than computation."
+                    ),
+                    metric_value=avg_efficiency,
+                    threshold_value=CPU_EFFICIENCY_IO_BOUND,
+                    recommendation=(
+                        "For I/O-bound workloads, consider caching hot data, using columnar "
+                        "formats (Parquet/Delta), compacting small files, or upgrading "
+                        "to faster storage."
+                    ),
+                    affected_entity="",
+                )
+            ]
+
+        return []
+
+    # ------------------------------------------------------------------
+    # Detector: Stage Retries (Phase B)
+    # ------------------------------------------------------------------
+
+    def detect_stage_retries(self, stages: List[SparkStage]) -> List[Insight]:
+        """Detect stages that have been retried.
+
+        Args:
+            stages: List of Spark stage objects.
+
+        Returns:
+            Insights for retried stages.
+        """
+        insights: List[Insight] = []
+        retried_count = 0
+
+        for s in stages:
+            if s.attempt_id <= 0:
+                continue
+
+            retried_count += 1
+            if s.attempt_id >= 3:
+                severity = Severity.CRITICAL
+            else:
+                severity = Severity.WARNING
+
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.STAGE_RETRY),
+                    category=InsightCategory.STAGE_RETRY,
+                    severity=severity,
+                    title=f"Stage {s.stage_id} retried (attempt {s.attempt_id})",
+                    description=(
+                        f"Stage {s.stage_id} is on attempt {s.attempt_id}, indicating "
+                        f"previous attempts failed. Repeated retries waste compute and "
+                        f"delay job completion."
+                    ),
+                    metric_value=float(s.attempt_id),
+                    threshold_value=1.0,
+                    recommendation=(
+                        "Check executor logs for the root cause of stage failures. "
+                        "Common causes: OOM errors, fetch failures, node decommissioning. "
+                        "Consider increasing spark.executor.memory or spark.task.maxFailures."
+                    ),
+                    affected_entity=f"stage_{s.stage_id}",
+                )
+            )
+
+        # Escalate if multiple stages are being retried
+        if retried_count > 1:
+            # Find the highest severity insight and promote if needed
+            for insight in insights:
+                if insight.severity == Severity.WARNING:
+                    insights.append(
+                        Insight(
+                            id=self._next_id(InsightCategory.STAGE_RETRY),
+                            category=InsightCategory.STAGE_RETRY,
+                            severity=Severity.CRITICAL,
+                            title=f"Multiple stages retried ({retried_count} stages)",
+                            description=(
+                                f"{retried_count} stages have been retried, indicating "
+                                f"a systemic issue such as unstable nodes or memory pressure."
+                            ),
+                            metric_value=float(retried_count),
+                            threshold_value=1.0,
+                            recommendation=(
+                                "Multiple stage retries suggest a cluster-wide issue. "
+                                "Check for unstable nodes, insufficient memory, or network "
+                                "problems. Consider increasing executor memory or using "
+                                "larger instance types."
+                            ),
+                            affected_entity="",
+                        )
+                    )
+                    break
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: SQL Anomalies (Phase B)
+    # ------------------------------------------------------------------
+
+    def detect_sql_anomalies(self, sql_queries: Optional[List[SQLQuery]]) -> List[Insight]:
+        """Detect anomalous SQL query patterns.
+
+        Args:
+            sql_queries: List of SQL queries, or None.
+
+        Returns:
+            Insights for SQL anomalies.
+        """
+        if not sql_queries:
+            return []
+
+        insights: List[Insight] = []
+
+        # Compute median duration of completed queries
+        completed = [q for q in sql_queries if q.status != "RUNNING" and q.duration_ms > 0]
+        if len(completed) >= 2:
+            durations = [q.duration_ms for q in completed]
+            median_duration = statistics.median(durations)
+        else:
+            median_duration = 0.0
+
+        for q in sql_queries:
+            # Flag long-running queries
+            if q.status == "RUNNING" and q.duration_ms > SQL_LONG_RUNNING_MS:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.SQL_ANOMALY),
+                        category=InsightCategory.SQL_ANOMALY,
+                        severity=Severity.INFO,
+                        title=f"Long-running SQL query #{q.execution_id} ({q.duration_ms / 1000:.0f}s)",
+                        description=(
+                            f"SQL query #{q.execution_id} has been running for "
+                            f"{q.duration_ms / 1000:.0f}s, exceeding the "
+                            f"{SQL_LONG_RUNNING_MS / 1000:.0f}s threshold."
+                        ),
+                        metric_value=float(q.duration_ms),
+                        threshold_value=float(SQL_LONG_RUNNING_MS),
+                        recommendation=(
+                            "Review the query execution plan for optimization opportunities. "
+                            "Check for missing partition pruning, inefficient joins, or "
+                            "full table scans."
+                        ),
+                        affected_entity=f"sql_{q.execution_id}",
+                    )
+                )
+
+            # Flag duration outliers
+            if median_duration > 0 and q.duration_ms > SQL_ANOMALY_MIN_DURATION_MS:
+                ratio = q.duration_ms / median_duration
+                if ratio >= SQL_ANOMALY_CRITICAL_FACTOR:
+                    insights.append(
+                        Insight(
+                            id=self._next_id(InsightCategory.SQL_ANOMALY),
+                            category=InsightCategory.SQL_ANOMALY,
+                            severity=Severity.CRITICAL,
+                            title=f"SQL query #{q.execution_id} is {ratio:.0f}x slower than median",
+                            description=(
+                                f"SQL query #{q.execution_id} took {q.duration_ms / 1000:.0f}s, "
+                                f"which is {ratio:.0f}x the median duration of "
+                                f"{median_duration / 1000:.0f}s."
+                            ),
+                            metric_value=ratio,
+                            threshold_value=SQL_ANOMALY_CRITICAL_FACTOR,
+                            recommendation=(
+                                "This query is a significant outlier. Review its execution plan, "
+                                "check for data skew or missing statistics, and consider "
+                                "adding partition pruning or indexing."
+                            ),
+                            affected_entity=f"sql_{q.execution_id}",
+                        )
+                    )
+                elif ratio >= SQL_ANOMALY_WARNING_FACTOR:
+                    insights.append(
+                        Insight(
+                            id=self._next_id(InsightCategory.SQL_ANOMALY),
+                            category=InsightCategory.SQL_ANOMALY,
+                            severity=Severity.WARNING,
+                            title=f"SQL query #{q.execution_id} is {ratio:.0f}x slower than median",
+                            description=(
+                                f"SQL query #{q.execution_id} took {q.duration_ms / 1000:.0f}s, "
+                                f"which is {ratio:.0f}x the median duration of "
+                                f"{median_duration / 1000:.0f}s."
+                            ),
+                            metric_value=ratio,
+                            threshold_value=SQL_ANOMALY_WARNING_FACTOR,
+                            recommendation=(
+                                "Review this query's execution plan for optimization "
+                                "opportunities. Check for data skew or missing statistics."
+                            ),
+                            affected_entity=f"sql_{q.execution_id}",
+                        )
+                    )
+
+            # Flag queries with failed jobs
+            if q.failed_jobs > 0:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.SQL_ANOMALY),
+                        category=InsightCategory.SQL_ANOMALY,
+                        severity=Severity.WARNING,
+                        title=f"SQL query #{q.execution_id} has {q.failed_jobs} failed job(s)",
+                        description=(
+                            f"SQL query #{q.execution_id} has {q.failed_jobs} failed job(s) "
+                            f"out of {q.success_jobs + q.failed_jobs + q.running_jobs} total. "
+                            f"Failed jobs may indicate data issues or resource constraints."
+                        ),
+                        metric_value=float(q.failed_jobs),
+                        threshold_value=0.0,
+                        recommendation=(
+                            "Check the Spark UI for detailed error messages on the failed jobs. "
+                            "Common causes: OOM, data format issues, or permission errors."
+                        ),
+                        affected_entity=f"sql_{q.execution_id}",
+                    )
+                )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Join Strategy (Phase C)
+    # ------------------------------------------------------------------
+
+    def detect_join_strategy(
+        self,
+        stages: List[SparkStage],
+        cluster: Optional[ClusterInfo],
+    ) -> List[Insight]:
+        """Detect stages that may benefit from broadcast joins.
+
+        Args:
+            stages: List of Spark stage objects.
+            cluster: Cluster info, or None if unavailable.
+
+        Returns:
+            Insights for potential broadcast join candidates.
+        """
+        insights: List[Insight] = []
+
+        for s in stages:
+            if s.status not in (StageStatus.ACTIVE, StageStatus.COMPLETE):
+                continue
+            if s.input_bytes <= 0:
+                continue
+
+            shuffle_total = s.shuffle_read_bytes + s.shuffle_write_bytes
+            if shuffle_total > JOIN_SHUFFLE_INPUT_RATIO * s.input_bytes and s.input_bytes < JOIN_SMALL_INPUT_BYTES:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.JOIN_STRATEGY),
+                        category=InsightCategory.JOIN_STRATEGY,
+                        severity=Severity.WARNING,
+                        title=f"Possible broadcast join candidate (stage {s.stage_id})",
+                        description=(
+                            f"Stage {s.stage_id} has {format_bytes(shuffle_total)} shuffle "
+                            f"for only {format_bytes(s.input_bytes)} input "
+                            f"({shuffle_total / s.input_bytes:.1f}x ratio). The small input "
+                            f"size suggests a broadcast join could eliminate the shuffle."
+                        ),
+                        metric_value=shuffle_total / s.input_bytes,
+                        threshold_value=JOIN_SHUFFLE_INPUT_RATIO,
+                        recommendation=(
+                            "Use a broadcast join hint (/*+ BROADCAST(small_table) */) or "
+                            "increase spark.sql.autoBroadcastJoinThreshold to cover this "
+                            "table's size."
+                        ),
+                        affected_entity=f"stage_{s.stage_id}",
+                    )
+                )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Caching Issues (Phase C)
+    # ------------------------------------------------------------------
+
+    def detect_caching_issues(
+        self,
+        storage: Optional[List[RDDInfo]],
+        executors: List[ExecutorInfo],
+        cluster: Optional[ClusterInfo],
+    ) -> List[Insight]:
+        """Detect caching inefficiencies.
+
+        Args:
+            storage: List of cached RDDs/DataFrames, or None.
+            executors: List of executor info objects.
+            cluster: Cluster info, or None if unavailable.
+
+        Returns:
+            Insights for caching issues.
+        """
+        if not storage:
+            return []
+
+        insights: List[Insight] = []
+
+        # Check for partially cached RDDs
+        for rdd in storage:
+            if rdd.fraction_cached < CACHE_PARTIAL_THRESHOLD:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.CACHING),
+                        category=InsightCategory.CACHING,
+                        severity=Severity.WARNING,
+                        title=f"Partially cached: {rdd.name or f'RDD {rdd.rdd_id}'} ({rdd.fraction_cached:.0%})",
+                        description=(
+                            f"'{rdd.name or f'RDD {rdd.rdd_id}'}' has only "
+                            f"{rdd.num_cached_partitions}/{rdd.num_partitions} partitions cached "
+                            f"({rdd.fraction_cached:.0%}). Partial caching may cause recomputation."
+                        ),
+                        metric_value=rdd.fraction_cached,
+                        threshold_value=CACHE_PARTIAL_THRESHOLD,
+                        recommendation=(
+                            "Ensure sufficient memory for full caching, or switch to "
+                            "MEMORY_AND_DISK storage level to prevent evictions. "
+                            "Consider unpersisting unused cached data."
+                        ),
+                        affected_entity=f"rdd_{rdd.rdd_id}",
+                    )
+                )
+
+        # Check total cache memory usage
+        active_executors = [e for e in executors if e.is_active and not e.is_driver]
+        total_executor_memory = sum(e.max_memory for e in active_executors)
+        total_cache_memory = sum(rdd.memory_used for rdd in storage)
+
+        if total_executor_memory > 0:
+            cache_pct = (total_cache_memory / total_executor_memory) * 100.0
+            if cache_pct > CACHE_MEMORY_WARNING_PCT:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.CACHING),
+                        category=InsightCategory.CACHING,
+                        severity=Severity.WARNING,
+                        title=f"High cache memory usage ({cache_pct:.0f}% of executor memory)",
+                        description=(
+                            f"Cached data is using {format_bytes(total_cache_memory)} "
+                            f"({cache_pct:.0f}% of {format_bytes(total_executor_memory)} "
+                            f"total executor memory). This leaves limited memory for execution."
+                        ),
+                        metric_value=cache_pct,
+                        threshold_value=CACHE_MEMORY_WARNING_PCT,
+                        recommendation=(
+                            "Unpersist unused cached data with .unpersist(). "
+                            "Use MEMORY_AND_DISK storage level to spill to disk instead of "
+                            "evicting. Consider increasing executor memory."
+                        ),
+                        affected_entity="",
+                    )
+                )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Auto-Termination (Phase C)
+    # ------------------------------------------------------------------
+
+    def detect_auto_termination(
+        self,
+        cluster: Optional[ClusterInfo],
+        jobs: List[SparkJob],
+        executors: List[ExecutorInfo],
+    ) -> List[Insight]:
+        """Detect auto-termination configuration issues.
+
+        Args:
+            cluster: Cluster info, or None if unavailable.
+            jobs: List of Spark jobs.
+            executors: List of executor info objects.
+
+        Returns:
+            Insights for auto-termination configuration.
+        """
+        if cluster is None:
+            return []
+
+        insights: List[Insight] = []
+        auto_term_mins = cluster.autotermination_minutes
+
+        if auto_term_mins == 0:
+            has_active_jobs = any(j.status == JobStatus.RUNNING for j in jobs)
+            has_active_tasks = any(e.active_tasks > 0 for e in executors if e.is_active)
+
+            if not has_active_jobs and not has_active_tasks:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.AUTO_TERMINATION),
+                        category=InsightCategory.AUTO_TERMINATION,
+                        severity=Severity.CRITICAL,
+                        title="Idle cluster with no auto-termination",
+                        description=(
+                            "The cluster has no active jobs or tasks and auto-termination "
+                            "is disabled. This will incur unnecessary costs."
+                        ),
+                        metric_value=0.0,
+                        threshold_value=1.0,
+                        recommendation=(
+                            "Enable auto-termination (e.g. 30-60 minutes) to avoid paying "
+                            "for idle clusters. Set autotermination_minutes in the cluster "
+                            "configuration."
+                        ),
+                        affected_entity="",
+                    )
+                )
+            else:
+                insights.append(
+                    Insight(
+                        id=self._next_id(InsightCategory.AUTO_TERMINATION),
+                        category=InsightCategory.AUTO_TERMINATION,
+                        severity=Severity.WARNING,
+                        title="Auto-termination disabled",
+                        description=(
+                            "Auto-termination is disabled on this cluster. The cluster "
+                            "will continue running (and incurring costs) indefinitely."
+                        ),
+                        metric_value=0.0,
+                        threshold_value=1.0,
+                        recommendation=(
+                            "Enable auto-termination with a reasonable timeout (e.g. 30-120 "
+                            "minutes) to prevent cost overruns from forgotten clusters."
+                        ),
+                        affected_entity="",
+                    )
+                )
+        elif auto_term_mins > 120:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.AUTO_TERMINATION),
+                    category=InsightCategory.AUTO_TERMINATION,
+                    severity=Severity.INFO,
+                    title=f"Long auto-termination timeout ({auto_term_mins} min)",
+                    description=(
+                        f"Auto-termination is set to {auto_term_mins} minutes. Consider "
+                        f"a shorter timeout to reduce costs during idle periods."
+                    ),
+                    metric_value=float(auto_term_mins),
+                    threshold_value=120.0,
+                    recommendation=(
+                        "Consider reducing auto-termination to 30-60 minutes for "
+                        "development clusters, or 60-120 minutes for production workloads."
+                    ),
+                    affected_entity="",
+                )
+            )
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Detector: Dynamic Allocation (Phase C)
+    # ------------------------------------------------------------------
+
+    def detect_dynamic_allocation(
+        self,
+        executors: List[ExecutorInfo],
+        cache: Optional[DataCache],
+    ) -> List[Insight]:
+        """Detect executor count instability from dynamic allocation.
+
+        Args:
+            executors: Current executor list.
+            cache: Data cache for historical executor snapshots, or None.
+
+        Returns:
+            Insights for executor count instability.
+        """
+        if cache is None:
+            return []
+
+        history: deque[object] = cache.get_history("executors")
+        if len(history) < 3:
+            return []
+
+        # Count active executors in each snapshot
+        counts: List[float] = []
+        for snapshot in history:
+            if isinstance(snapshot, list):
+                active_count = sum(1 for e in snapshot if isinstance(e, ExecutorInfo) and e.is_active)
+                counts.append(float(active_count))
+
+        if len(counts) < 3:
+            return []
+
+        mean_count = statistics.mean(counts)
+        if mean_count <= 0:
+            return []
+
+        stdev_count = statistics.stdev(counts)
+        cov = stdev_count / mean_count
+
+        if cov > EXECUTOR_COUNT_COV_WARNING:
+            return [
+                Insight(
+                    id=self._next_id(InsightCategory.DYNAMIC_ALLOCATION),
+                    category=InsightCategory.DYNAMIC_ALLOCATION,
+                    severity=Severity.WARNING,
+                    title=f"Executor count unstable (CoV={cov:.2f})",
+                    description=(
+                        f"Executor count has varied significantly over recent polls "
+                        f"(mean={mean_count:.1f}, stdev={stdev_count:.1f}, CoV={cov:.2f}). "
+                        f"Frequent scaling may cause shuffle fetch failures and performance "
+                        f"degradation."
+                    ),
+                    metric_value=cov,
+                    threshold_value=EXECUTOR_COUNT_COV_WARNING,
+                    recommendation=(
+                        "If using dynamic allocation, increase "
+                        "spark.dynamicAllocation.executorIdleTimeout or set "
+                        "spark.dynamicAllocation.minExecutors closer to the typical count. "
+                        "Consider using a fixed executor count for stable workloads."
+                    ),
+                    affected_entity="",
+                )
+            ]
+
+        return []
+
+    # ------------------------------------------------------------------
     # Health Score
     # ------------------------------------------------------------------
 
@@ -959,6 +2205,52 @@ class AnalyticsEngine:
         else:
             task_failures_score = 100
 
+        # -- Config Score (from Phase A insight counts/severity) --
+        config_categories = {
+            InsightCategory.AQE_CONFIG,
+            InsightCategory.SERIALIZATION,
+            InsightCategory.CONFIG_ANTI_PATTERN,
+            InsightCategory.PHOTON_OPPORTUNITY,
+        }
+        config_score = 100
+        for i in insights:
+            if i.category in config_categories:
+                if i.severity == Severity.CRITICAL:
+                    config_score -= 30
+                elif i.severity == Severity.WARNING:
+                    config_score -= 15
+        config_score = max(0, config_score)
+
+        # -- Driver Score (from DRIVER_BOTTLENECK insights) --
+        driver_score = 100
+        for i in insights:
+            if i.category == InsightCategory.DRIVER_BOTTLENECK:
+                if i.severity == Severity.CRITICAL:
+                    driver_score -= 30
+                elif i.severity == Severity.WARNING:
+                    driver_score -= 15
+        driver_score = max(0, driver_score)
+
+        # -- I/O Efficiency Score (from IO_PATTERN and CPU_IO_BOUND WARNING+) --
+        io_efficiency_score = 100
+        for i in insights:
+            if i.category in (InsightCategory.IO_PATTERN, InsightCategory.CPU_IO_BOUND):
+                if i.severity == Severity.CRITICAL:
+                    io_efficiency_score -= 30
+                elif i.severity == Severity.WARNING:
+                    io_efficiency_score -= 15
+        io_efficiency_score = max(0, io_efficiency_score)
+
+        # -- Stability Score (from STAGE_RETRY and DYNAMIC_ALLOCATION insights) --
+        stability_score = 100
+        for i in insights:
+            if i.category in (InsightCategory.STAGE_RETRY, InsightCategory.DYNAMIC_ALLOCATION):
+                if i.severity == Severity.CRITICAL:
+                    stability_score -= 30
+                elif i.severity == Severity.WARNING:
+                    stability_score -= 15
+        stability_score = max(0, stability_score)
+
         component_scores = {
             "gc": gc_score,
             "spill": spill_score,
@@ -966,6 +2258,10 @@ class AnalyticsEngine:
             "utilization": util_score,
             "shuffle": shuffle_score,
             "task_failures": task_failures_score,
+            "config": config_score,
+            "driver": driver_score,
+            "io_efficiency": io_efficiency_score,
+            "stability": stability_score,
         }
 
         # Weighted sum
@@ -1072,6 +2368,8 @@ class AnalyticsEngine:
         jobs: Optional[List[SparkJob]],
         sql_queries: Optional[List[SQLQuery]],
         cluster: Optional[ClusterInfo],
+        storage: Optional[List[RDDInfo]] = None,
+        cache: Optional[DataCache] = None,
     ) -> Optional[DiagnosticReport]:
         """Run all detectors and produce a complete diagnostic report.
 
@@ -1081,6 +2379,8 @@ class AnalyticsEngine:
             jobs: List of Spark jobs, or None.
             sql_queries: List of SQL queries, or None.
             cluster: Cluster info, or None.
+            storage: List of cached RDDs/DataFrames, or None.
+            cache: Data cache for historical data, or None.
 
         Returns:
             A DiagnosticReport, or None if executors is None (insufficient data).
@@ -1105,6 +2405,26 @@ class AnalyticsEngine:
         all_insights.extend(self.detect_straggler_tasks(safe_stages))
         all_insights.extend(self.detect_task_failures(executors))
         all_insights.extend(self.detect_memory_pressure(executors))
+
+        # Phase A — Config / model checks
+        all_insights.extend(self.detect_aqe_config(cluster))
+        all_insights.extend(self.detect_serialization(cluster, executors))
+        all_insights.extend(self.detect_executor_sizing(executors))
+        all_insights.extend(self.detect_driver_bottleneck(executors))
+        all_insights.extend(self.detect_config_anti_patterns(cluster, executors))
+        all_insights.extend(self.detect_photon_opportunity(cluster, sql_queries))
+
+        # Phase B — Metric-derived detections
+        all_insights.extend(self.detect_io_patterns(safe_stages))
+        all_insights.extend(self.detect_cpu_io_classification(safe_stages))
+        all_insights.extend(self.detect_stage_retries(safe_stages))
+        all_insights.extend(self.detect_sql_anomalies(sql_queries))
+
+        # Phase C — Cross-reference detections
+        all_insights.extend(self.detect_join_strategy(safe_stages, cluster))
+        all_insights.extend(self.detect_caching_issues(storage, executors, cluster))
+        all_insights.extend(self.detect_auto_termination(cluster, safe_jobs, executors))
+        all_insights.extend(self.detect_dynamic_allocation(executors, cache))
 
         # Deduplicate by id
         seen_ids: set[str] = set()

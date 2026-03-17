@@ -29,6 +29,7 @@ class Severity(str, enum.Enum):
 class InsightCategory(str, enum.Enum):
     """Classification of performance insights."""
 
+    # -- Original detectors --
     GC = "GC"
     SPILL = "SPILL"
     SKEW = "SKEW"
@@ -38,6 +39,26 @@ class InsightCategory(str, enum.Enum):
     STRAGGLER = "STRAGGLER"
     TASK_FAILURE = "TASK_FAILURE"
     MEMORY = "MEMORY"
+
+    # -- Phase A: Config / model checks --
+    AQE_CONFIG = "AQE_CONFIG"
+    SERIALIZATION = "SERIALIZATION"
+    EXECUTOR_SIZING = "EXECUTOR_SIZING"
+    DRIVER_BOTTLENECK = "DRIVER_BOTTLENECK"
+    CONFIG_ANTI_PATTERN = "CONFIG_ANTI_PATTERN"
+    PHOTON_OPPORTUNITY = "PHOTON_OPPORTUNITY"
+
+    # -- Phase B: Metric-derived detections --
+    IO_PATTERN = "IO_PATTERN"
+    CPU_IO_BOUND = "CPU_IO_BOUND"
+    STAGE_RETRY = "STAGE_RETRY"
+    SQL_ANOMALY = "SQL_ANOMALY"
+
+    # -- Phase C: Cross-reference detections --
+    JOIN_STRATEGY = "JOIN_STRATEGY"
+    CACHING = "CACHING"
+    AUTO_TERMINATION = "AUTO_TERMINATION"
+    DYNAMIC_ALLOCATION = "DYNAMIC_ALLOCATION"
 
 
 # ---------------------------------------------------------------------------
