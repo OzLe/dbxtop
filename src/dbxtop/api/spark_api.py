@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 import httpx
 
@@ -52,7 +52,7 @@ class SparkRESTClient:
         org_id: str,
         port: int = 40001,
         token: Optional[str] = None,
-        token_provider: Optional[Callable[[], str]] = None,
+        token_provider: Optional[Union[Callable[[], str], Callable[[], Awaitable[str]]]] = None,
         timeout: float = 10.0,
     ) -> None:
         self._workspace_url = workspace_url.rstrip("/")
@@ -75,6 +75,15 @@ class SparkRESTClient:
             headers=headers,
             follow_redirects=True,
         )
+
+    async def _resolve_token(self) -> Optional[str]:
+        """Resolve the token from the provider, handling both sync and async callables."""
+        if not self._token_provider:
+            return None
+        result = self._token_provider()
+        if hasattr(result, "__await__"):
+            return await result  # type: ignore[misc]
+        return result  # type: ignore[return-value]
 
     # -- URL construction ----------------------------------------------------
 
@@ -103,8 +112,9 @@ class SparkRESTClient:
         url = f"{self._base_url}/api/v1/applications"
         try:
             headers: Optional[Dict[str, str]] = None
-            if self._token_provider:
-                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            token = await self._resolve_token()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(url, headers=headers)
             resp.raise_for_status()
             apps = resp.json()
@@ -130,8 +140,9 @@ class SparkRESTClient:
             return False
         try:
             headers: Optional[Dict[str, str]] = None
-            if self._token_provider:
-                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            token = await self._resolve_token()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(f"{self._base_url}/api/v1/applications", headers=headers)
             self._available = resp.is_success
             return self._available
@@ -248,8 +259,9 @@ class SparkRESTClient:
         url = self._app_url(endpoint)
         try:
             headers: Optional[Dict[str, str]] = None
-            if self._token_provider:
-                headers = {"Authorization": f"Bearer {self._token_provider()}"}
+            token = await self._resolve_token()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
             resp = await self._client.get(url, params=params, headers=headers)
 
             # Rate limit handling

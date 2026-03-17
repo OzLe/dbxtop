@@ -182,7 +182,7 @@ class DatabricksClient:
         try:
             import httpx
 
-            headers = self._workspace.config.authenticate()
+            headers = await asyncio.to_thread(self._workspace.config.authenticate)
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as http:
                 resp = await http.get(
                     f"{host.rstrip('/')}/api/2.0/workspace/get-status",
@@ -199,18 +199,21 @@ class DatabricksClient:
         self._org_id = ""
         return self._org_id
 
-    def get_token(self) -> str:
-        """Return the current authentication token (synchronous).
+    async def get_token(self) -> str:
+        """Return the current authentication token.
 
         Supports both PAT tokens and OAuth (via ``authenticate()`` headers).
         Used by ``SparkRESTClient`` for bearer-token auth.
+
+        The ``authenticate()`` call is wrapped in ``asyncio.to_thread()``
+        because the SDK may perform network I/O (e.g. OAuth token refresh).
         """
-        # Try direct token first (PAT)
+        # Try direct token first (PAT) — config.token is a simple property read
         if self._workspace.config.token:
             return self._workspace.config.token
         # Fall back to authenticate() which handles OAuth/U2M/etc.
         try:
-            headers = self._workspace.config.authenticate()
+            headers = await asyncio.to_thread(self._workspace.config.authenticate)
             auth_header = headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 return auth_header[7:]
