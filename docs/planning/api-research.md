@@ -606,15 +606,15 @@ The SDK (`WorkspaceClient`) resolves credentials in this order:
 ```ini
 [DEFAULT]
 host = https://adb-1234567890.12.azuredatabricks.net
-token = dapi1234567890abcdef
+token = dapi_example_token_placeholder
 
-[yad2-prod]
+[my-profile]
 host = https://adb-1234567890.12.azuredatabricks.net
-token = dapi1234567890abcdef
+token = dapi_example_token_placeholder
 
 [yad2-dev]
 host = https://adb-0987654321.12.azuredatabricks.net
-token = dapi0987654321fedcba
+token = dapi_example_token_placeholder
 ```
 
 ### Using a Named Profile
@@ -623,10 +623,10 @@ token = dapi0987654321fedcba
 from databricks.sdk import WorkspaceClient
 
 # Explicit profile
-w = WorkspaceClient(profile="yad2-prod")
+w = WorkspaceClient(profile="my-profile")
 
 # Or via environment variable
-# export DATABRICKS_CONFIG_PROFILE=yad2-prod
+# export DATABRICKS_CONFIG_PROFILE=my-profile
 w = WorkspaceClient()
 ```
 
@@ -645,13 +645,13 @@ w = WorkspaceClient()
 
 ```python
 # Use the SDK's api_client for any REST endpoint not covered by typed methods
-w = WorkspaceClient(profile="yad2-prod")
+w = WorkspaceClient(profile="my-profile")
 
 # Direct REST call
 response = w.api_client.do(
     method="GET",
     path="/api/2.0/clusters/get",
-    body={"cluster_id": "0311-160038-vjuv0ah9"}
+    body={"cluster_id": "0123-456789-abcdefgh"}
 )
 ```
 
@@ -664,8 +664,8 @@ The Spark application ID is needed for all Spark REST API v1 calls. Here are the
 ### Method 1: From ClusterDetails (SDK)
 
 ```python
-w = WorkspaceClient(profile="yad2-prod")
-cluster = w.clusters.get("0311-160038-vjuv0ah9")
+w = WorkspaceClient(profile="my-profile")
+cluster = w.clusters.get("0123-456789-abcdefgh")
 spark_context_id = cluster.spark_context_id  # Changes on driver restart
 ```
 
@@ -687,7 +687,7 @@ app_id = apps[0]["id"]  # Most recent application
 ```python
 # Execute on cluster to get app ID
 w.command_execution.execute_and_wait(
-    cluster_id="0311-160038-vjuv0ah9",
+    cluster_id="0123-456789-abcdefgh",
     language="python",
     command="print(spark.sparkContext.applicationId)"
 )
@@ -716,7 +716,7 @@ https://<workspace-url>/driver-proxy-api/o/<org-id>/<cluster-id>/<port>/<path>
 **Components:**
 - `<workspace-url>`: Your Databricks workspace URL (e.g., `adb-1234567890.12.azuredatabricks.net`)
 - `<org-id>`: Organization/workspace ID (the numeric part after `o/` in workspace URL, or `0` for some deployments)
-- `<cluster-id>`: Target cluster ID (e.g., `0311-160038-vjuv0ah9`)
+- `<cluster-id>`: Target cluster ID (e.g., `0123-456789-abcdefgh`)
 - `<port>`: Port on the driver node to proxy to
 - `<path>`: The URL path forwarded to the driver service
 
@@ -746,7 +746,7 @@ import requests
 
 WORKSPACE = "https://adb-1234567890.12.azuredatabricks.net"
 ORG_ID = "1234567890"  # or "0" for some deployments
-CLUSTER_ID = "0311-160038-vjuv0ah9"
+CLUSTER_ID = "0123-456789-abcdefgh"
 PORT = 40001  # Spark UI proxy port
 TOKEN = "<your-pat>"
 

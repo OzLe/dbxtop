@@ -3,7 +3,7 @@
 > **Version:** 1.0.0
 > **Date:** 2026-03-16
 > **Status:** Approved — Ready for Implementation
-> **Repo:** `/Users/ozlevi/Development/dbxtop/`
+> **Repo:** `<project-root>/`
 > **Companion Documents:** `architecture.md`, `specification.md`, `api-research.md`
 
 ---
