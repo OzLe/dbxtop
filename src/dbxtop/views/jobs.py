@@ -131,9 +131,13 @@ class JobsView(BaseView):
             elapsed_ms = int((datetime.now(timezone.utc) - job.submission_time).total_seconds() * 1000)
             duration = format_duration(elapsed_ms)
 
+        # Escape brackets in data values to prevent Rich markup parsing errors
+        name = job.name.replace("[", "\\[")
+        stage_ids = str(job.stage_ids).replace("[", "\\[")
+
         return (
             f"[bold]Job {job.job_id}[/bold]\n\n"
-            f"  Description:  {job.name}\n"
+            f"  Description:  {name}\n"
             f"  Status:       {job.status.value}\n"
             f"  Submitted:    {submitted}\n"
             f"  Completed:    {completed}\n"
@@ -148,7 +152,7 @@ class JobsView(BaseView):
             f"  Active:    {job.num_active_stages}\n"
             f"  Completed: {job.num_completed_stages}\n"
             f"  Failed:    {job.num_failed_stages}\n"
-            f"  IDs:       {job.stage_ids}\n\n"
+            f"  IDs:       {stage_ids}\n\n"
             f"[dim]Press Escape to close[/dim]"
         )
 
