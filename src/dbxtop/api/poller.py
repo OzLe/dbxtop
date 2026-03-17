@@ -212,7 +212,9 @@ class MetricsPoller:
             # Detect spark_context_id change (driver restart within RUNNING)
             ctx_id = cluster_slot.data.spark_context_id
             if ctx_id and self._previous_spark_context_id and ctx_id != self._previous_spark_context_id:
-                logger.info("Spark context ID changed (%s → %s) — re-discovering app", self._previous_spark_context_id, ctx_id)
+                logger.info(
+                    "Spark context ID changed (%s → %s) — re-discovering app", self._previous_spark_context_id, ctx_id
+                )
                 if self._spark is not None:
                     self._spark._app_id = None  # noqa: SLF001
                     self._app.call_later(self._try_spark_reconnect)
