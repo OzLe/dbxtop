@@ -13,7 +13,7 @@ from textual.widgets import Input, Static, TabbedContent, TabPane
 from dbxtop.api.cache import DataCache
 from dbxtop.api.client import DatabricksClient
 from dbxtop.api.models import ClusterState
-from dbxtop.api.poller import DataUpdated, MetricsPoller
+from dbxtop.api.poller import DataUpdated, KeepAliveUpdated, MetricsPoller
 from dbxtop.api.spark_api import SparkRESTClient
 from dbxtop.config import Settings
 from dbxtop.views.base import BaseView
@@ -175,6 +175,8 @@ class DbxTopApp(App[None]):
         refresh_interval: float = 3.0,
         slow_refresh_interval: float = 15.0,
         theme_name: str = "dark",
+        keepalive: bool = False,
+        keepalive_interval: float = 300.0,
     ) -> None:
         super().__init__()
         # Apply light/dark theme via Textual's built-in theme system
@@ -185,6 +187,8 @@ class DbxTopApp(App[None]):
         self._refresh_interval = refresh_interval
         self._slow_refresh_interval = slow_refresh_interval
         self._theme_name = theme_name
+        self._keepalive = keepalive
+        self._keepalive_interval = keepalive_interval
 
         self._settings: Optional[Settings] = None
         self._dbx_client: Optional[DatabricksClient] = None
@@ -235,6 +239,8 @@ class DbxTopApp(App[None]):
                 refresh=self._refresh_interval,
                 slow_refresh=self._slow_refresh_interval,
                 theme=self._theme_name,
+                keepalive=self._keepalive,
+                keepalive_interval=self._keepalive_interval,
             )
         except ValueError as exc:
             self._show_error(f"Configuration error: {exc}")
@@ -337,6 +343,13 @@ class DbxTopApp(App[None]):
 
         # Forward to active view (only if relevant slots changed)
         self._forward_to_active_view(event.updated_slots)
+
+    def on_keep_alive_updated(self, event: KeepAliveUpdated) -> None:
+        """Update footer with keepalive status."""
+        if self._footer is not None:
+            self._footer.keepalive_active = event.active
+            self._footer.keepalive_last = event.last_success
+            self._footer.keepalive_failed = event.failed
 
     def _handle_cluster_state_change(self) -> None:
         """Update Spark availability based on cluster state."""
