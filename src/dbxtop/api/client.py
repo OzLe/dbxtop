@@ -17,6 +17,7 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.compute import (
     ClusterDetails,
     ClusterEvent as SdkClusterEvent,
+    Language,
     Library,
     LibraryFullStatus,
 )
@@ -71,6 +72,7 @@ class DatabricksClient:
         self._cluster_id = cluster_id
         self._workspace = WorkspaceClient(profile=profile)
         self._org_id: Optional[str] = None
+        self._keepalive_context_id: Optional[str] = None
 
     # -- public async methods ------------------------------------------------
 
@@ -215,6 +217,57 @@ class DatabricksClient:
         except Exception:
             logger.warning("Token retrieval via authenticate() failed", exc_info=True)
         return ""
+
+    async def keepalive_ping(self) -> bool:
+        """Send a lightweight command to keep the cluster alive.
+
+        Creates a command execution context on first call (or when the
+        previous one has been destroyed), then executes ``print("keepalive")``
+        on it.
+
+        Returns:
+            ``True`` if the command executed successfully, ``False`` otherwise.
+        """
+        try:
+            if self._keepalive_context_id is None:
+                ctx = await asyncio.to_thread(
+                    self._workspace.command_execution.create_and_wait,
+                    cluster_id=self._cluster_id,
+                    language=Language.PYTHON,
+                )
+                self._keepalive_context_id = ctx.id
+
+            result = await asyncio.to_thread(
+                self._workspace.command_execution.execute_and_wait,
+                cluster_id=self._cluster_id,
+                context_id=self._keepalive_context_id,
+                language=Language.PYTHON,
+                command='print("keepalive")',
+            )
+            return result.status is not None and result.status.value == "Finished"
+        except Exception as exc:
+            if "RESOURCE_DOES_NOT_EXIST" in str(exc):
+                self._keepalive_context_id = None
+            return False
+
+    async def destroy_keepalive_context(self) -> None:
+        """Destroy the cached command execution context (best-effort).
+
+        If no context exists this is a no-op.  Errors are swallowed so
+        callers can always fire-and-forget.
+        """
+        if self._keepalive_context_id is None:
+            return
+        ctx_id = self._keepalive_context_id
+        self._keepalive_context_id = None
+        try:
+            await asyncio.to_thread(
+                self._workspace.command_execution.destroy,
+                cluster_id=self._cluster_id,
+                context_id=ctx_id,
+            )
+        except Exception:
+            logger.debug("Error destroying keepalive context %s", ctx_id, exc_info=True)
 
     # -- private helpers -----------------------------------------------------
 

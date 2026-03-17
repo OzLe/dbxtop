@@ -45,6 +45,8 @@ class Settings:
     max_retries: int = 3
     request_timeout_s: float = 10.0
     theme: str = "dark"
+    keepalive: bool = False
+    keepalive_interval_s: float = 300.0
 
     def __post_init__(self) -> None:
         """Validate field constraints after initialisation."""
@@ -60,6 +62,11 @@ class Settings:
             raise ValueError(f"slow_poll_s ({self.slow_poll_s}) must be >= fast_poll_s ({self.fast_poll_s})")
         if self.theme not in ("dark", "light"):
             raise ValueError(f"theme must be 'dark' or 'light', got {self.theme!r}")
+        if self.keepalive:
+            if not 60.0 <= self.keepalive_interval_s <= 1800.0:
+                raise ValueError(
+                    f"keepalive_interval_s must be between 60.0 and 1800.0, got {self.keepalive_interval_s}"
+                )
 
     @classmethod
     def from_cli(
@@ -69,6 +76,8 @@ class Settings:
         refresh: float | None = None,
         slow_refresh: float | None = None,
         theme: str | None = None,
+        keepalive: bool | None = None,
+        keepalive_interval: float | None = None,
     ) -> Settings:
         """Create a Settings instance by merging CLI args, env vars, and defaults.
 
@@ -78,6 +87,8 @@ class Settings:
             refresh: CLI ``--refresh`` value (overrides ``DBXTOP_REFRESH``).
             slow_refresh: CLI ``--slow-refresh`` value (overrides ``DBXTOP_SLOW_REFRESH``).
             theme: CLI ``--theme`` value (overrides ``DBXTOP_THEME``).
+            keepalive: CLI ``--keepalive`` value (overrides ``DBXTOP_KEEPALIVE``).
+            keepalive_interval: CLI ``--keepalive-interval`` value (overrides ``DBXTOP_KEEPALIVE_INTERVAL``).
 
         Returns:
             A validated Settings instance.
@@ -96,10 +107,20 @@ class Settings:
 
         resolved_theme = theme or os.environ.get("DBXTOP_THEME", "dark")
 
+        env_keepalive = os.environ.get("DBXTOP_KEEPALIVE", "").lower() in ("1", "true", "yes")
+        resolved_keepalive = keepalive if keepalive is not None else env_keepalive
+
+        env_keepalive_interval = os.environ.get("DBXTOP_KEEPALIVE_INTERVAL")
+        resolved_keepalive_interval = (
+            keepalive_interval if keepalive_interval is not None else _parse_env_float(env_keepalive_interval, 300.0)
+        )
+
         return cls(
             profile=resolved_profile,
             cluster_id=resolved_cluster_id,
             fast_poll_s=resolved_fast,
             slow_poll_s=resolved_slow,
             theme=resolved_theme,
+            keepalive=resolved_keepalive,
+            keepalive_interval_s=resolved_keepalive_interval,
         )
