@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional, Set
+from typing import Any, Callable, Coroutine, Optional, Set
 
 from textual.app import App
 from textual.message import Message
@@ -171,7 +171,7 @@ class MetricsPoller:
         updated: Set[str] = set()
 
         all_slots = ("executors", "spark_jobs", "stages")
-        all_coros = (
+        all_coros: tuple[Callable[..., Coroutine[Any, Any, Any]], ...] = (
             self._spark.get_executors,
             self._spark.get_jobs,
             self._spark.get_stages,
@@ -216,7 +216,7 @@ class MetricsPoller:
 
         # SDK calls (always available)
         all_sdk_slots = ("cluster", "events", "job_runs", "libraries")
-        all_sdk_fns = (
+        all_sdk_fns: tuple[Callable[..., Coroutine[Any, Any, Any]], ...] = (
             self._dbx.get_cluster,
             self._dbx.get_events,
             self._dbx.get_job_runs,
@@ -348,7 +348,7 @@ class MetricsPoller:
         if count == 0:
             return False
         skip_interval = min(2**count, 2**MAX_BACKOFF_MULTIPLIER)
-        return (self._poll_cycle % skip_interval) != 0
+        return bool((self._poll_cycle % skip_interval) != 0)
 
     # -- cluster state transitions -------------------------------------------
 

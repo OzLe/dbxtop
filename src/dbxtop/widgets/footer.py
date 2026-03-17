@@ -7,7 +7,7 @@ in a compact bottom-of-screen bar.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from textual.reactive import reactive
 from textual.widgets import Static
@@ -45,7 +45,7 @@ class KeyboardFooter(Static):
     keepalive_last: reactive[Optional[datetime]] = reactive[Optional[datetime]](None)
     keepalive_failed: reactive[bool] = reactive(False)
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__("", **kwargs)
 
     def on_mount(self) -> None:

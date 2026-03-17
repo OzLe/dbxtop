@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -57,7 +57,7 @@ class AuthErrorScreen(ModalScreen[None]):
     }
     """
 
-    def __init__(self, message: str, **kwargs: object) -> None:
+    def __init__(self, message: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._message = message
 
@@ -95,7 +95,7 @@ class DetailScreen(ModalScreen[None]):
     }
     """
 
-    def __init__(self, content: str, **kwargs: object) -> None:
+    def __init__(self, content: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._content = content
 

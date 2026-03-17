@@ -7,12 +7,13 @@ support for side-by-side comparison.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
+from textual.coordinate import Coordinate
 
 from dbxtop.analytics.run import RunSession
 
@@ -57,7 +58,7 @@ class RunListScreen(ModalScreen[Optional[List[str]]]):
     }
     """
 
-    def __init__(self, runs: List[RunSession], **kwargs: object) -> None:
+    def __init__(self, runs: List[RunSession], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._runs = runs
         self._selected_ids: Set[str] = set()
@@ -66,7 +67,7 @@ class RunListScreen(ModalScreen[Optional[List[str]]]):
         """Compose the run list screen layout."""
         with Static(id="run-list-container"):
             yield Static("Saved Runs", id="run-list-title")
-            table = DataTable(id="run-list-table")
+            table: DataTable[str] = DataTable(id="run-list-table")
             table.cursor_type = "row"
             yield table
             yield Static("Space: select | c: compare (2) | d: delete | Esc: close", id="run-list-status")
@@ -105,7 +106,7 @@ class RunListScreen(ModalScreen[Optional[List[str]]]):
         table = self.query_one("#run-list-table", DataTable)
         for row_idx, run in enumerate(self._runs):
             selected = "●" if run.run_id in self._selected_ids else " "
-            table.update_cell_at((row_idx, 0), selected)
+            table.update_cell_at(Coordinate(row_idx, 0), selected)
 
     def action_toggle_select(self) -> None:
         """Toggle selection of the current row."""
