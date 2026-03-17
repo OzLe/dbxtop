@@ -352,7 +352,7 @@ class DbxTopApp(App[None]):
                 try:
                     await self._spark_client.close()
                 except Exception:
-                    pass
+                    logger.debug("Error closing Spark client", exc_info=True)
             self._spark_client = None
             self._update_spark_status(False)
 
@@ -500,7 +500,7 @@ class DbxTopApp(App[None]):
                         self._run_manager.on_report(child._last_report, executors)
                         break
             except Exception:
-                pass
+                logger.debug("Could not feed report to run manager", exc_info=True)
 
     # -- actions -------------------------------------------------------------
 
@@ -563,7 +563,7 @@ class DbxTopApp(App[None]):
             filter_input.display = True
             filter_input.focus()
         except Exception:
-            pass
+            logger.debug("Could not activate filter input", exc_info=True)
 
     def action_clear_filter(self) -> None:
         """Clear filter text and hide the input."""
@@ -572,7 +572,7 @@ class DbxTopApp(App[None]):
             filter_input.value = ""
             filter_input.display = False
         except Exception:
-            pass
+            logger.debug("Could not clear filter input", exc_info=True)
         # Clear filter on active view
         self._apply_filter_to_active_view("")
 
@@ -662,7 +662,7 @@ class DbxTopApp(App[None]):
                     child.set_run_state(name, started)
                     break
         except Exception:
-            pass
+            logger.debug("Could not update analytics run state", exc_info=True)
 
     def action_show_run_list(self) -> None:
         """Show the list of saved runs."""

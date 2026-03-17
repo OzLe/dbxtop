@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import click
 
 from dbxtop import __version__
@@ -68,6 +70,13 @@ def main(
     keepalive_interval: float,
 ) -> None:
     """Real-time terminal dashboard for Databricks/Spark clusters."""
+    # Validate cluster_id to prevent path traversal in run storage paths
+    if not re.match(r"^[\w-]+$", cluster_id):
+        raise click.BadParameter(
+            f"Invalid cluster ID format: {cluster_id!r}. Must contain only alphanumeric, hyphens, underscores.",
+            param_hint="'--cluster-id'",
+        )
+
     if slow_refresh < refresh:
         raise click.BadParameter(
             f"--slow-refresh ({slow_refresh}) must be >= --refresh ({refresh})",

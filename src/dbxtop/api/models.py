@@ -79,6 +79,8 @@ def format_bytes(n: int) -> str:
     Returns:
         Formatted string such as ``'1.0 KB'`` or ``'3.2 GB'``.
     """
+    if n is None:  # type: ignore[arg-type]
+        return "--"
     if n < 0:
         return f"-{format_bytes(-n)}"
     if n == 0:
@@ -100,6 +102,8 @@ def format_duration(ms: int) -> str:
     Returns:
         Formatted string such as ``'2m 15s'`` or ``'1d 3h 10m'``.
     """
+    if ms is None:  # type: ignore[arg-type]
+        return "--"
     if ms < 0:
         return f"-{format_duration(-ms)}"
     if ms == 0:

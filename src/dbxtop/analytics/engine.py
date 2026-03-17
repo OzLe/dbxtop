@@ -1667,32 +1667,28 @@ class AnalyticsEngine:
             )
 
         # Escalate if multiple stages are being retried
-        if retried_count > 1:
-            # Find the highest severity insight and promote if needed
-            for insight in insights:
-                if insight.severity == Severity.WARNING:
-                    insights.append(
-                        Insight(
-                            id=self._next_id(InsightCategory.STAGE_RETRY),
-                            category=InsightCategory.STAGE_RETRY,
-                            severity=Severity.CRITICAL,
-                            title=f"Multiple stages retried ({retried_count} stages)",
-                            description=(
-                                f"{retried_count} stages have been retried, indicating "
-                                f"a systemic issue such as unstable nodes or memory pressure."
-                            ),
-                            metric_value=float(retried_count),
-                            threshold_value=1.0,
-                            recommendation=(
-                                "Multiple stage retries suggest a cluster-wide issue. "
-                                "Check for unstable nodes, insufficient memory, or network "
-                                "problems. Consider increasing executor memory or using "
-                                "larger instance types."
-                            ),
-                            affected_entity="",
-                        )
-                    )
-                    break
+        if retried_count > 1 and any(i.severity == Severity.WARNING for i in insights):
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.STAGE_RETRY),
+                    category=InsightCategory.STAGE_RETRY,
+                    severity=Severity.CRITICAL,
+                    title=f"Multiple stages retried ({retried_count} stages)",
+                    description=(
+                        f"{retried_count} stages have been retried, indicating "
+                        f"a systemic issue such as unstable nodes or memory pressure."
+                    ),
+                    metric_value=float(retried_count),
+                    threshold_value=1.0,
+                    recommendation=(
+                        "Multiple stage retries suggest a cluster-wide issue. "
+                        "Check for unstable nodes, insufficient memory, or network "
+                        "problems. Consider increasing executor memory or using "
+                        "larger instance types."
+                    ),
+                    affected_entity="",
+                )
+            )
 
         return insights
 
