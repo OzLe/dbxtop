@@ -11,6 +11,7 @@ from typing import Any, Optional
 from textual.reactive import reactive
 from textual.widgets import Static
 
+from dbxtop import __version__
 from dbxtop.api.cache import DataCache
 from dbxtop.api.models import ClusterInfo, ClusterState, format_duration
 from dbxtop.widgets.status_indicator import CLUSTER_STATES
@@ -41,7 +42,7 @@ class ClusterHeader(Static):
         poll_interval: float = 3.0,
         **kwargs: Any,
     ) -> None:
-        super().__init__("dbxtop | connecting...", **kwargs)
+        super().__init__(f"dbxtop v{__version__} | connecting...", **kwargs)
         self._profile = profile
         self._poll_interval = poll_interval
         self._cluster: Optional[ClusterInfo] = None
@@ -75,7 +76,7 @@ class ClusterHeader(Static):
 
     def _render_bar(self) -> None:
         """Compose and update the header text."""
-        parts: list[str] = ["dbxtop"]
+        parts: list[str] = [f"dbxtop v{__version__}"]
 
         info = self._cluster
         if info is not None:

@@ -139,6 +139,32 @@ ruff format --check src/ tests/
 textual-dev run --dev "dbxtop -c CLUSTER_ID -p PROFILE"
 ```
 
+## Version Management
+
+The version is defined in `src/dbxtop/__init__.py` as the single source of truth. `pyproject.toml` reads it dynamically via `[tool.hatch.version]`. The version is also displayed in the TUI header bar.
+
+To bump the version, edit `__version__` in `src/dbxtop/__init__.py`:
+
+```python
+__version__ = "0.2.0"
+```
+
+## Disclaimer
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+**dbxtop is an independent open-source project and is not affiliated with,
+endorsed by, or sponsored by Databricks, Inc.** Use at your own risk. The
+authors assume no responsibility for any impact on your Databricks clusters,
+workspaces, or data. dbxtop operates in read-only mode and does not modify
+cluster state (except when the optional `--keepalive` flag is used).
+
 ## License
 
 [MIT](LICENSE)
