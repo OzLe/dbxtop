@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dbxtop"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Real-time terminal dashboard for Databricks/Spark clusters"
 readme = "README.md"
 license = "MIT"
@@ -47,6 +47,9 @@ dbxtop = "dbxtop.cli:main"
 [project.urls]
 Homepage = "https://github.com/ozlevi/dbxtop"
 Issues = "https://github.com/ozlevi/dbxtop/issues"
+
+[tool.hatch.version]
+path = "src/dbxtop/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dbxtop"]
