@@ -262,8 +262,12 @@ class SparkRESTClient:
             return None
 
         # Honour rate-limit backoff (skip request until cooldown expires)
-        if self._rate_limit_until > 0 and time.monotonic() < self._rate_limit_until:
-            return None
+        if self._rate_limit_until > 0:
+            if time.monotonic() < self._rate_limit_until:
+                return None
+            # Backoff expired — clear the flag so the footer updates
+            self._rate_limited = False
+            self._rate_limit_until = 0.0
 
         url = self._app_url(endpoint)
         try:

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
+from databricks.sdk.errors import NotFound, PermissionDenied, Unauthenticated
 from databricks.sdk.service.compute import (
     ClusterDetails,
     ClusterEvent as SdkClusterEvent,
@@ -287,15 +287,10 @@ class DatabricksClient:
             return await asyncio.to_thread(func, *args, **kwargs)
         except NotFound as exc:
             raise ClusterNotFoundError(f"Cluster {self._cluster_id} not found: {exc}") from exc
+        except (Unauthenticated, PermissionDenied) as exc:
+            raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
         except Exception as exc:
-            # Check for specific SDK auth exceptions first
-            exc_type_name = type(exc).__name__
-            if exc_type_name in ("Unauthenticated", "PermissionDenied"):
-                raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
-            # Fallback: check error message for auth indicators
             msg = str(exc).lower()
-            if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
-                raise AuthenticationError(f"Authentication failed for profile '{self._profile}': {exc}") from exc
             if "timeout" in msg or "connect" in msg:
                 raise DatabricksConnectionError(f"Could not reach Databricks workspace: {exc}") from exc
             raise

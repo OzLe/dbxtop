@@ -666,7 +666,11 @@ class DbxTopApp(App[None]):
 
     def action_show_run_list(self) -> None:
         """Show the list of saved runs."""
-        self.notify("Run list not yet implemented", severity="warning")
+        from dbxtop.analytics.run_manager import RunManager
+        from dbxtop.views.run_list import RunListScreen
+
+        runs = RunManager.list_runs(self._cluster_id)
+        self.push_screen(RunListScreen(runs))
 
     # -- error display -------------------------------------------------------
 

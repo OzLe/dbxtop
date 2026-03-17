@@ -129,8 +129,11 @@ class RunManager:
         # Export accumulated insights
         run.accumulated_insights = [_export_insight(acc) for acc in self._accumulator.get_all()]
 
-        # Save to disk
-        self._save_run(run)
+        # Save to disk — only reset state after successful save
+        try:
+            self._save_run(run)
+        except Exception:
+            logger.error("Failed to save run %s — data preserved in memory", run.run_id, exc_info=True)
 
         logger.info("Run stopped: %s (%s)", run.name, run.run_id)
 
