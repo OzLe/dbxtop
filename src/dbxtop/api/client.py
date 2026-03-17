@@ -10,7 +10,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied, Unauthenticated
@@ -112,7 +112,7 @@ class DatabricksClient:
                     break
             return events
 
-        return await self._call(_fetch_events)
+        return cast(List[ClusterEvent], await self._call(_fetch_events))
 
     async def get_job_runs(self, active_only: bool = True) -> List[JobRun]:
         """Fetch Databricks job runs.
@@ -133,7 +133,7 @@ class DatabricksClient:
                     break
             return runs
 
-        return await self._call(_fetch_runs)
+        return cast(List[JobRun], await self._call(_fetch_runs))
 
     async def get_library_status(self) -> List[LibraryInfo]:
         """Fetch installed library statuses for the cluster.
@@ -150,7 +150,7 @@ class DatabricksClient:
             statuses = getattr(result, "library_statuses", None) or []
             return [_map_library(lib) for lib in statuses]
 
-        return await self._call(_fetch_libs)
+        return cast(List[LibraryInfo], await self._call(_fetch_libs))
 
     async def get_workspace_url(self) -> str:
         """Return the workspace host URL (e.g. ``https://adb-123.1.azuredatabricks.net``)."""

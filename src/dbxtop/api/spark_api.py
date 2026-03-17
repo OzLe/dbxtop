@@ -88,8 +88,8 @@ class SparkRESTClient:
         try:
             result = self._token_provider()
             if hasattr(result, "__await__"):
-                return await result  # type: ignore[misc]
-            return result  # type: ignore[return-value]
+                return await result
+            return result
         except Exception:
             logger.warning("Token provider failed — request will be unauthenticated", exc_info=True)
             return None

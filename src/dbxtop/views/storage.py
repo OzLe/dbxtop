@@ -37,7 +37,7 @@ class StorageView(BaseView):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._sort_index = 0
         self.current_sort_key = "memory_used"
