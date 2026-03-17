@@ -7,6 +7,8 @@ and JSON persistence to ~/.dbxtop/runs/.
 from __future__ import annotations
 
 import logging
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -20,6 +22,24 @@ from dbxtop.api.models import ExecutorInfo
 logger = logging.getLogger(__name__)
 
 SNAPSHOT_INTERVAL_S: float = 30.0
+
+# Patterns that indicate a Spark config key may contain sensitive data.
+_SENSITIVE_KEY_PATTERNS = re.compile(
+    r"(key|secret|password|token|credential|account\.key|sas|connection\.string)",
+    re.IGNORECASE,
+)
+
+
+def filter_sensitive_config(config: Dict[str, str]) -> Dict[str, str]:
+    """Remove config entries whose keys match sensitive patterns.
+
+    Args:
+        config: Raw Spark configuration dictionary.
+
+    Returns:
+        A copy with sensitive entries removed.
+    """
+    return {k: v for k, v in config.items() if not _SENSITIVE_KEY_PATTERNS.search(k)}
 
 
 class RunManager:
@@ -120,11 +140,21 @@ class RunManager:
         return run
 
     def _save_run(self, run: RunSession) -> None:
-        """Persist run to ~/.dbxtop/runs/{cluster_id}/{run_id}.json."""
+        """Persist run to ~/.dbxtop/runs/{cluster_id}/{run_id}.json.
+
+        Files are created with 0o600 (owner read/write only) permissions
+        because run data may contain cluster configuration values.
+        """
         run_dir = Path.home() / ".dbxtop" / "runs" / self._cluster_id
-        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = run_dir / f"{run.run_id}.json"
-        path.write_text(run.model_dump_json(indent=2))
+        # Use os.open with restrictive permissions to avoid the brief window
+        # where the file exists with default permissions.
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, run.model_dump_json(indent=2).encode())
+        finally:
+            os.close(fd)
         logger.info("Run saved to %s", path)
 
     @staticmethod
