@@ -126,9 +126,12 @@ class SQLView(BaseView):
         submitted = format_timestamp(query.submission_time)
         duration = format_duration(query.duration_ms) if query.duration_ms else "running"
 
+        # Escape brackets in data values to prevent Rich markup parsing errors
+        description = query.description.replace("[", "\\[")
+
         return (
             f"[bold]SQL Query {query.execution_id}[/bold]\n\n"
-            f"  Description:  {query.description}\n"
+            f"  Description:  {description}\n"
             f"  Status:       {query.status}\n"
             f"  Submitted:    {submitted}\n"
             f"  Duration:     {duration}\n\n"
