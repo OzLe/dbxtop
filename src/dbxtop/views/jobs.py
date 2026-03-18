@@ -83,7 +83,11 @@ class JobsView(BaseView):
         # Build row dicts
         rows = self._build_rows(jobs)
 
-        # Apply filter
+        # Apply failures-only filter
+        if self.failures_only:
+            rows = [r for r in rows if r["status_str"] == "FAILED" or r.get("num_failed_tasks", 0) > 0]
+
+        # Apply text filter
         if self.filter_text:
             rows = self.filter_rows(rows, self.filter_text, ["name", "status_str"])
 
@@ -176,6 +180,18 @@ class JobsView(BaseView):
         ]
         return "\n".join(lines)
 
+    def get_selected_job(self) -> Optional[SparkJob]:
+        """Return the SparkJob model for the currently selected row."""
+        try:
+            table = self.query_one("#jobs-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            job_id = int(row_cells[0])
+        except Exception:
+            return None
+        return next((j for j in self._current_jobs if j.job_id == job_id), None)
+
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""
         self._sort_index = (self._sort_index + 1) % len(_SORT_KEYS)
@@ -228,6 +244,7 @@ class JobsView(BaseView):
                     "duration": duration,
                     "submitted": submitted,
                     "num_completed_tasks": job.num_completed_tasks,
+                    "num_failed_tasks": job.num_failed_tasks,
                     "num_completed_stages": job.num_completed_stages,
                     "elapsed_ms": elapsed_ms,
                     "submission_time": job.submission_time,

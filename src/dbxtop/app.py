@@ -28,6 +28,7 @@ from dbxtop.views.jobs import JobsView
 from dbxtop.views.sql import SQLView
 from dbxtop.views.stages import StagesView
 from dbxtop.views.storage import StorageView
+from dbxtop.screens.error_detail import ErrorDetailScreen
 from dbxtop.screens.task_list import TaskListScreen
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
@@ -207,6 +208,9 @@ class DbxTopApp(App[None]):
         Binding("escape", "clear_filter", "Clear filter", show=False),
         Binding("enter", "show_detail", "Detail", show=False),
         Binding("t", "show_failed_tasks", "Failed Tasks", show=False),
+        Binding("f", "toggle_failures", "Failures Only", show=False),
+        Binding("g", "goto_error", "Go To Error", show=False),
+        Binding("e", "error_action", "Error Action", show=False),
         Binding("ctrl+r", "toggle_run", "Record Run"),
         Binding("ctrl+l", "show_run_list", "Saved Runs"),
         Binding("question_mark", "toggle_help", "Help"),
@@ -390,6 +394,9 @@ class DbxTopApp(App[None]):
         # Update rate limit / connection status in footer
         self._update_footer_status()
 
+        # Update error counts in footer
+        self._update_footer_error_counts(event.updated_slots)
+
         # Forward to active view (only if relevant slots changed)
         self._forward_to_active_view(event.updated_slots)
 
@@ -453,6 +460,19 @@ class DbxTopApp(App[None]):
             self._footer.sdk_only = cluster_running
         else:
             self._footer.sdk_only = False
+
+    def _update_footer_error_counts(self, updated_slots: set[str]) -> None:
+        """Update footer error counts from cached job/stage data."""
+        if self._footer is None or self._cache is None:
+            return
+        if "spark_jobs" in updated_slots:
+            jobs_slot = self._cache.get("spark_jobs")
+            if jobs_slot.data is not None:
+                self._footer.error_failed_tasks = sum(j.num_failed_tasks for j in jobs_slot.data)
+        if "stages" in updated_slots:
+            stages_slot = self._cache.get("stages")
+            if stages_slot.data is not None:
+                self._footer.error_failed_stages = sum(1 for s in stages_slot.data if s.status.value == "FAILED")
 
     # Map view types to the cache slots they care about
     _VIEW_SLOTS: dict[type, set[str]] = {
@@ -585,6 +605,103 @@ class DbxTopApp(App[None]):
                     break
         except Exception:
             logger.debug("Could not show failed tasks", exc_info=True)
+
+    def action_toggle_failures(self) -> None:
+        """Toggle failures-only filter on the active jobs/stages view."""
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if isinstance(child, (JobsView, StagesView)):
+                    child.failures_only = not child.failures_only
+                    if self._cache is not None:
+                        child.refresh_data(self._cache)
+                    break
+        except Exception:
+            logger.debug("Could not toggle failures filter", exc_info=True)
+
+    def action_goto_error(self) -> None:
+        """Navigate from a failed item to its related error context.
+
+        SQLView: go to the first failed job in JobsView.
+        JobsView: go to the first failed stage in StagesView.
+        """
+        if self._cache is None:
+            return
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if isinstance(child, SQLView):
+                    query = child.get_selected_query()
+                    if query is not None and query.failed_job_ids:
+                        tabbed.active = "jobs"
+                    break
+                if isinstance(child, JobsView):
+                    job = child.get_selected_job()
+                    if job is not None and job.num_failed_stages > 0:
+                        tabbed.active = "stages"
+                    break
+        except Exception:
+            logger.debug("Could not navigate to error", exc_info=True)
+
+    def action_error_action(self) -> None:
+        """Context-sensitive error action per view.
+
+        StagesView: open ErrorDetailScreen for failure_reason or TaskListScreen.
+        ExecutorsView: open ErrorDetailScreen for remove_reason.
+        JobsView/SQLView: open detail modal.
+        """
+        if self._cache is None:
+            return
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if isinstance(child, StagesView):
+                    stage = child.get_selected_stage()
+                    if stage is None:
+                        break
+                    if stage.failure_reason:
+                        self.push_screen(
+                            ErrorDetailScreen(
+                                title=f"Stage {stage.stage_id} Failure",
+                                content=stage.failure_reason,
+                            )
+                        )
+                    elif stage.num_failed_tasks > 0 and self._spark_client is not None:
+                        self.push_screen(
+                            TaskListScreen(
+                                spark_client=self._spark_client,
+                                stage_id=stage.stage_id,
+                                stage_name=stage.name,
+                                attempt_id=stage.attempt_id,
+                                num_failed_tasks=stage.num_failed_tasks,
+                                num_tasks=stage.num_tasks,
+                            )
+                        )
+                    break
+                if isinstance(child, ExecutorsView):
+                    detail = child.get_selected_detail(self._cache)
+                    exe = child.get_selected_executor(self._cache)
+                    if exe is not None and not exe.is_active and exe.remove_reason:
+                        self.push_screen(
+                            ErrorDetailScreen(
+                                title=f"Executor {exe.executor_id} Remove Reason",
+                                content=exe.remove_reason,
+                            )
+                        )
+                    elif detail:
+                        self.push_screen(DetailScreen(detail))
+                    break
+                if isinstance(child, (JobsView, SQLView)):
+                    if hasattr(child, "get_selected_detail"):
+                        detail = child.get_selected_detail(self._cache)
+                        if detail:
+                            self.push_screen(DetailScreen(detail))
+                    break
+        except Exception:
+            logger.debug("Could not perform error action", exc_info=True)
 
     def action_activate_filter(self) -> None:
         """Show the filter input and focus it."""
