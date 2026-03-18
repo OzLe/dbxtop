@@ -241,6 +241,7 @@ class DbxTopApp(App[None]):
         self._header: Optional[ClusterHeader] = None
         self._footer: Optional[KeyboardFooter] = None
         self._run_manager: Optional[RunManager] = None
+        self._last_report_ts: Optional[datetime] = None
 
     # -- compose -------------------------------------------------------------
 
@@ -494,6 +495,10 @@ class DbxTopApp(App[None]):
                 analytics_pane = self.query_one(TabbedContent).get_pane("analytics")
                 for child in analytics_pane.walk_children():
                     if isinstance(child, AnalyticsView) and child._last_report is not None:
+                        # Skip if we already forwarded this exact report
+                        if child._last_report.timestamp == self._last_report_ts:
+                            break
+                        self._last_report_ts = child._last_report.timestamp
                         executors = self._cache.get("executors").data or []
                         self._run_manager.on_report(child._last_report, executors)
                         break
@@ -668,7 +673,28 @@ class DbxTopApp(App[None]):
         from dbxtop.views.run_list import RunListScreen
 
         runs = RunManager.list_runs(self._cluster_id)
-        self.push_screen(RunListScreen(runs))
+        self.push_screen(RunListScreen(runs), callback=self._on_run_list_dismissed)
+
+    def _on_run_list_dismissed(self, run_ids: list[str] | None) -> None:
+        """Handle the result from RunListScreen — open comparison if two IDs returned."""
+        if not run_ids or len(run_ids) != 2:
+            return
+
+        from dbxtop.analytics.run_manager import RunManager
+        from dbxtop.views.run_comparison import RunComparisonScreen, compare_runs
+
+        run_a = RunManager.load_run(self._cluster_id, run_ids[0])
+        run_b = RunManager.load_run(self._cluster_id, run_ids[1])
+        if run_a is None or run_b is None:
+            self.notify("Could not load one or both runs", severity="error")
+            return
+
+        # Order by start time so run_a is the earlier ("before") run
+        if run_a.started_at > run_b.started_at:
+            run_a, run_b = run_b, run_a
+
+        comparison = compare_runs(run_a, run_b)
+        self.push_screen(RunComparisonScreen(comparison))
 
     # -- error display -------------------------------------------------------
 

@@ -20,7 +20,7 @@ This file provides guidance to Claude Code when working with code in the `dbxtop
 
 ```
 src/dbxtop/
-├── __init__.py              # Package version (__version__)
+├── __init__.py              # Package init, imports __version__ from _version.py
 ├── __main__.py              # `python -m dbxtop` entry point
 ├── cli.py                   # Click CLI: --profile, --cluster-id, --refresh, --theme
 ├── app.py                   # DbxTopApp(textual.App) — root app, tab management, poller lifecycle
@@ -308,7 +308,8 @@ The project follows a **gitflow** branching model:
 - Default: **patch** bump (e.g., 0.2.0 → 0.2.1)
 - Add `minor` label to PR → minor bump (e.g., 0.2.0 → 0.3.0)
 - Add `major` label to PR → major bump (e.g., 0.2.0 → 1.0.0)
-- The version bump commit and tag are auto-pushed to `main` and back-merged to `develop`
+- Version is derived from git tags via `hatch-vcs` — no version file to update manually
+- The workflow creates an annotated tag and a GitHub Release (no commit to `main` needed)
 
 **Commit style:** Imperative mood, short first line (<72 chars), optional body with details.
 - **Never commit directly to `main` or `develop`.**

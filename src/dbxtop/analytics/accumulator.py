@@ -2,8 +2,8 @@
 
 Persists insights across refresh cycles so that transient performance issues
 remain visible even after they resolve.  Each insight is keyed by
-``(category.value, affected_entity)`` and tracks first-seen / last-seen
-timestamps, peak severity, occurrence count, and resolution state.
+``(category.value, affected_entity, title)`` and tracks first-seen /
+last-seen timestamps, peak severity, occurrence count, and resolution state.
 """
 
 from __future__ import annotations
@@ -81,14 +81,14 @@ class AccumulatedInsight:
 # ---------------------------------------------------------------------------
 
 # Type alias for the compound key used to identify unique insights.
-_InsightKey = Tuple[str, str]
+_InsightKey = Tuple[str, str, str]
 
 
 class InsightAccumulator:
     """Accumulates insights across polling cycles.
 
     Each unique insight is identified by the compound key
-    ``(category.value, affected_entity)``.  On every :meth:`update` call the
+    ``(category.value, affected_entity, title)``.  On every :meth:`update` call the
     accumulator upserts current insights, marks absent ones as resolved, and
     re-activates previously resolved insights that re-emerge.
 
@@ -115,7 +115,7 @@ class InsightAccumulator:
         current_keys: set[_InsightKey] = set()
 
         for insight in current_insights:
-            key: _InsightKey = (insight.category.value, insight.affected_entity)
+            key: _InsightKey = (insight.category.value, insight.affected_entity, insight.title)
             current_keys.add(key)
 
             existing = self._insights.get(key)

@@ -82,9 +82,9 @@ def compare_runs(run_a: RunSession, run_b: RunSession) -> RunComparison:
         sb = comp_b.get(key, 100)
         component_deltas[key] = (sa, sb, sb - sa)
 
-    # Insight diff by (category, affected_entity)
-    insights_a = {(i.category, i.affected_entity): i for i in run_a.accumulated_insights}
-    insights_b = {(i.category, i.affected_entity): i for i in run_b.accumulated_insights}
+    # Insight diff by (category, affected_entity, title)
+    insights_a = {(i.category, i.affected_entity, i.title): i for i in run_a.accumulated_insights}
+    insights_b = {(i.category, i.affected_entity, i.title): i for i in run_b.accumulated_insights}
 
     resolved = [insights_a[k] for k in insights_a if k not in insights_b]
     new = [insights_b[k] for k in insights_b if k not in insights_a]
