@@ -28,6 +28,7 @@ from dbxtop.views.jobs import JobsView
 from dbxtop.views.sql import SQLView
 from dbxtop.views.stages import StagesView
 from dbxtop.views.storage import StorageView
+from dbxtop.screens.task_list import TaskListScreen
 from dbxtop.widgets.footer import KeyboardFooter
 from dbxtop.widgets.header import ClusterHeader
 
@@ -205,6 +206,7 @@ class DbxTopApp(App[None]):
         Binding("slash", "activate_filter", "Filter", show=False),
         Binding("escape", "clear_filter", "Clear filter", show=False),
         Binding("enter", "show_detail", "Detail", show=False),
+        Binding("t", "show_failed_tasks", "Failed Tasks", show=False),
         Binding("ctrl+r", "toggle_run", "Record Run"),
         Binding("ctrl+l", "show_run_list", "Saved Runs"),
         Binding("question_mark", "toggle_help", "Help"),
@@ -558,6 +560,31 @@ class DbxTopApp(App[None]):
                     break
         except Exception:
             logger.debug("Could not show detail for selected row", exc_info=True)
+
+    def action_show_failed_tasks(self) -> None:
+        """Open TaskListScreen for the selected stage's failed tasks."""
+        if self._spark_client is None:
+            return
+        try:
+            tabbed = self.query_one(TabbedContent)
+            active_pane = tabbed.get_pane(tabbed.active)
+            for child in active_pane.walk_children():
+                if isinstance(child, StagesView):
+                    stage = child.get_selected_stage()
+                    if stage is not None and stage.num_failed_tasks > 0:
+                        self.push_screen(
+                            TaskListScreen(
+                                spark_client=self._spark_client,
+                                stage_id=stage.stage_id,
+                                stage_name=stage.name,
+                                attempt_id=stage.attempt_id,
+                                num_failed_tasks=stage.num_failed_tasks,
+                                num_tasks=stage.num_tasks,
+                            )
+                        )
+                    break
+        except Exception:
+            logger.debug("Could not show failed tasks", exc_info=True)
 
     def action_activate_filter(self) -> None:
         """Show the filter input and focus it."""
