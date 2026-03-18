@@ -189,6 +189,24 @@ class ExecutorsView(BaseView):
         self._sort_index = (self._sort_index + 1) % len(_SORT_KEYS)
         self.cycle_sort(_SORT_KEYS[self._sort_index])
 
+    def get_selected_executor(self, cache: DataCache) -> Optional[ExecutorInfo]:
+        """Return the ExecutorInfo model for the currently selected row."""
+        try:
+            table = self.query_one("#exec-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            eid = str(row_cells[0]).strip()
+            if "driver" in eid.lower():
+                eid = "driver"
+        except Exception:
+            return None
+        slot = cache.get("executors")
+        executors: Optional[List[ExecutorInfo]] = slot.data
+        if executors is None:
+            return None
+        return next((e for e in executors if e.executor_id == eid), None)
+
     def get_selected_detail(self, cache: DataCache) -> Optional[str]:
         """Return detail text for the currently selected executor row."""
         try:

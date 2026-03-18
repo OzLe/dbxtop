@@ -95,6 +95,9 @@ class StagesView(BaseView):
 
         rows = self._build_rows(stages)
 
+        if self.failures_only:
+            rows = [r for r in rows if r["status_str"] == "FAILED" or r.get("num_failed_tasks", 0) > 0]
+
         if self.filter_text:
             rows = self.filter_rows(rows, self.filter_text, ["name", "status_str"])
 
@@ -255,6 +258,7 @@ class StagesView(BaseView):
                     "submission_time": stage.submission_time,
                     "submitted": format_timestamp(stage.submission_time),
                     "num_complete_tasks": stage.num_complete_tasks,
+                    "num_failed_tasks": stage.num_failed_tasks,
                 }
             )
         return rows
