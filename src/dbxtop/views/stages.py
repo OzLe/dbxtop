@@ -95,6 +95,9 @@ class StagesView(BaseView):
 
         rows = self._build_rows(stages)
 
+        if self.failures_only:
+            rows = [r for r in rows if r["status_str"] == "FAILED" or r.get("num_failed_tasks", 0) > 0]
+
         if self.filter_text:
             rows = self.filter_rows(rows, self.filter_text, ["name", "status_str"])
 
@@ -143,29 +146,62 @@ class StagesView(BaseView):
         # Escape brackets in data values to prevent Rich markup parsing errors
         name = stage.name.replace("[", "\\[")
 
-        return (
-            f"[bold]Stage {stage.stage_id} (attempt {stage.attempt_id})[/bold]\n\n"
-            f"  Name:        {name}\n"
-            f"  Status:      {stage.status.value}\n"
-            f"  Submitted:   {submitted}\n"
-            f"  Completed:   {completed}\n\n"
-            f"[bold]Tasks[/bold]\n"
-            f"  Total:     {stage.num_tasks}\n"
-            f"  Active:    {stage.num_active_tasks}\n"
-            f"  Complete:  {stage.num_complete_tasks}\n"
-            f"  Failed:    {stage.num_failed_tasks}\n\n"
-            f"[bold]I/O[/bold]\n"
-            f"  Input:         {format_bytes(stage.input_bytes)} ({stage.input_records:,} records)\n"
-            f"  Output:        {format_bytes(stage.output_bytes)} ({stage.output_records:,} records)\n"
-            f"  Shuffle Read:  {format_bytes(stage.shuffle_read_bytes)}\n"
-            f"  Shuffle Write: {format_bytes(stage.shuffle_write_bytes)}\n\n"
-            f"[bold]Resources[/bold]\n"
-            f"  Executor Time: {format_duration(stage.executor_run_time_ms)}\n"
-            f"  CPU Time:      {format_duration(stage.executor_cpu_time_ns // 1_000_000)}\n"
-            f"  Memory Spill:  {format_bytes(stage.memory_spill_bytes)}\n"
-            f"  Disk Spill:    {format_bytes(stage.disk_spill_bytes)}\n\n"
-            f"[dim]Press Escape to close[/dim]"
-        )
+        lines = [
+            f"[bold]Stage {stage.stage_id} (attempt {stage.attempt_id})[/bold]\n",
+            f"  Name:        {name}",
+            f"  Status:      {stage.status.value}",
+            f"  Submitted:   {submitted}",
+            f"  Completed:   {completed}\n",
+            "[bold]Tasks[/bold]",
+            f"  Total:     {stage.num_tasks}",
+            f"  Active:    {stage.num_active_tasks}",
+            f"  Complete:  {stage.num_complete_tasks}",
+            f"  Failed:    {stage.num_failed_tasks}",
+            f"  Killed:    {stage.num_killed_tasks}",
+        ]
+
+        if stage.killed_tasks_summary:
+            for reason, count in stage.killed_tasks_summary.items():
+                reason_escaped = reason.replace("[", "\\[")
+                lines.append(f"    {reason_escaped}: {count}")
+
+        lines += [
+            "",
+            "[bold]I/O[/bold]",
+            f"  Input:         {format_bytes(stage.input_bytes)} ({stage.input_records:,} records)",
+            f"  Output:        {format_bytes(stage.output_bytes)} ({stage.output_records:,} records)",
+            f"  Shuffle Read:  {format_bytes(stage.shuffle_read_bytes)}",
+            f"  Shuffle Write: {format_bytes(stage.shuffle_write_bytes)}\n",
+            "[bold]Resources[/bold]",
+            f"  Executor Time:    {format_duration(stage.executor_run_time_ms)}",
+            f"  CPU Time:         {format_duration(stage.executor_cpu_time_ns // 1_000_000)}",
+            f"  JVM GC Time:      {format_duration(stage.jvm_gc_time_ms)}",
+            f"  Peak Exec Memory: {format_bytes(stage.peak_execution_memory)}",
+            f"  Memory Spill:     {format_bytes(stage.memory_spill_bytes)}",
+            f"  Disk Spill:       {format_bytes(stage.disk_spill_bytes)}",
+        ]
+
+        if stage.failure_reason:
+            reason_escaped = stage.failure_reason.replace("[", "\\[")
+            # Truncate very long stack traces for the modal
+            if len(reason_escaped) > 2000:
+                reason_escaped = reason_escaped[:2000] + "\n  ... (truncated)"
+            lines += ["", "[bold red]Failure Reason[/bold red]", f"  {reason_escaped}"]
+
+        lines += ["", "[dim]Press Escape to close[/dim]"]
+        return "\n".join(lines)
+
+    def get_selected_stage(self) -> Optional[SparkStage]:
+        """Return the SparkStage model for the currently selected row."""
+        try:
+            table = self.query_one("#stages-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            stage_id = int(row_cells[0])
+        except Exception:
+            return None
+        return next((s for s in self._current_stages if s.stage_id == stage_id), None)
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""
@@ -222,6 +258,7 @@ class StagesView(BaseView):
                     "submission_time": stage.submission_time,
                     "submitted": format_timestamp(stage.submission_time),
                     "num_complete_tasks": stage.num_complete_tasks,
+                    "num_failed_tasks": stage.num_failed_tasks,
                 }
             )
         return rows

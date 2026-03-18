@@ -123,7 +123,7 @@ def _make_sql(
         "execution_id": execution_id,
         "duration_ms": duration_ms,
         "status": status,
-        "failed_jobs": failed_jobs,
+        "failed_job_ids": list(range(failed_jobs)),
         "success_jobs": 1,
     }
     defaults.update(kwargs)

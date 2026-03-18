@@ -15,10 +15,10 @@ from textual.widgets import Static
 
 # Per-tab extra bindings (tab_id → hint string)
 _VIEW_BINDINGS: dict[str, str] = {
-    "jobs": "s:Sort | Enter:Detail",
-    "stages": "s:Sort | Enter:Detail",
-    "executors": "s:Sort",
-    "sql": "s:Sort | Enter:Detail",
+    "jobs": "s:Sort | Enter:Detail | e:Errors | f:Failures | g:GoTo",
+    "stages": "s:Sort | Enter:Detail | e:Errors | f:Failures | t:Tasks",
+    "executors": "s:Sort | Enter:Detail | e:Errors",
+    "sql": "s:Sort | Enter:Detail | g:GoTo",
     "storage": "s:Sort",
 }
 
@@ -44,6 +44,8 @@ class KeyboardFooter(Static):
     keepalive_active: reactive[bool] = reactive(False)
     keepalive_last: reactive[Optional[datetime]] = reactive[Optional[datetime]](None)
     keepalive_failed: reactive[bool] = reactive(False)
+    error_failed_tasks: reactive[int] = reactive(0)
+    error_failed_stages: reactive[int] = reactive(0)
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__("", **kwargs)
@@ -76,6 +78,14 @@ class KeyboardFooter(Static):
         """Re-render when keep-alive failure state changes."""
         self._render_bar()
 
+    def watch_error_failed_tasks(self) -> None:
+        """Re-render when error counts change."""
+        self._render_bar()
+
+    def watch_error_failed_stages(self) -> None:
+        """Re-render when error counts change."""
+        self._render_bar()
+
     def _render_bar(self) -> None:
         """Compose and update the footer text."""
         parts: list[str] = [_GLOBAL_HINTS]
@@ -104,5 +114,14 @@ class KeyboardFooter(Static):
                 parts.append(f"[green]Keep-alive: ON | last: {age_str}[/green]")
             else:
                 parts.append("[green]Keep-alive: ON[/green]")
+
+        # Error summary
+        if self.error_failed_tasks > 0 or self.error_failed_stages > 0:
+            error_parts: list[str] = []
+            if self.error_failed_tasks > 0:
+                error_parts.append(f"{self.error_failed_tasks} failed tasks")
+            if self.error_failed_stages > 0:
+                error_parts.append(f"{self.error_failed_stages} failed stages")
+            parts.append(f"[red]Errors: {', '.join(error_parts)}[/red]")
 
         self.update(" | ".join(parts))
