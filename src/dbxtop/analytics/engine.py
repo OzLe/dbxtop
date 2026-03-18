@@ -33,6 +33,11 @@ from dbxtop.api.models import (
     StageStatus,
     format_bytes,
 )
+from dbxtop.utils.error_classifier import (
+    ErrorCategory,
+    classify_error,
+    classify_executor_removal,
+)
 
 # ---------------------------------------------------------------------------
 # Threshold constants
@@ -2355,6 +2360,207 @@ class AnalyticsEngine:
         return recommendations[:5]
 
     # ------------------------------------------------------------------
+    # Phase D — Error-based detections (from P1 enriched fields)
+    # ------------------------------------------------------------------
+
+    def detect_stage_failures(self, stages: List[SparkStage]) -> List[Insight]:
+        """Detect failed stages and classify their failure reasons.
+
+        Uses the error classifier to turn raw failureReason strings into
+        actionable insights with category-specific recommendations.
+
+        Args:
+            stages: List of Spark stages with enriched error fields.
+
+        Returns:
+            List of insights for failed stages.
+        """
+        insights: List[Insight] = []
+        for stage in stages:
+            if stage.status != StageStatus.FAILED or not stage.failure_reason:
+                continue
+            category = classify_error(stage.failure_reason)
+            if category == ErrorCategory.OOM:
+                severity = Severity.CRITICAL
+                recommendation = (
+                    "Increase spark.executor.memory or spark.executor.memoryOverhead. "
+                    "Consider reducing partition size with spark.sql.shuffle.partitions."
+                )
+            elif category == ErrorCategory.SHUFFLE_FETCH:
+                severity = Severity.CRITICAL
+                recommendation = (
+                    "Check network connectivity between executors. Consider enabling "
+                    "spark.shuffle.io.retryWait and spark.shuffle.io.maxRetries."
+                )
+            elif category == ErrorCategory.CONTAINER_KILLED:
+                severity = Severity.CRITICAL
+                recommendation = (
+                    "Cluster may be under-provisioned. Increase spark.executor.memoryOverhead "
+                    "or use larger instance types."
+                )
+            elif category == ErrorCategory.SERIALIZATION:
+                severity = Severity.WARNING
+                recommendation = (
+                    "Check that all objects used in transformations are serializable. "
+                    "Consider using Kryo serialization."
+                )
+            elif category == ErrorCategory.TIMEOUT:
+                severity = Severity.WARNING
+                recommendation = (
+                    "Increase spark.network.timeout and spark.executor.heartbeatInterval. "
+                    "Check for long GC pauses or overloaded executors."
+                )
+            else:
+                severity = Severity.WARNING
+                recommendation = "Inspect the full failure reason in the stage detail view."
+
+            # Truncate failure reason for the description
+            reason_short = stage.failure_reason[:200]
+            if len(stage.failure_reason) > 200:
+                reason_short += "..."
+
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.TASK_FAILURE),
+                    category=InsightCategory.TASK_FAILURE,
+                    severity=severity,
+                    title=f"Stage {stage.stage_id} failed ({category.value})",
+                    description=f"Stage {stage.stage_id} failed: {reason_short}",
+                    metric_value=1.0,
+                    threshold_value=0.0,
+                    recommendation=recommendation,
+                    affected_entity=f"stage-{stage.stage_id}",
+                )
+            )
+        return insights
+
+    def detect_executor_failures(self, executors: List[ExecutorInfo]) -> List[Insight]:
+        """Detect problematic executor removals and exclusions.
+
+        Classifies remove_reason strings and flags excluded executors.
+
+        Args:
+            executors: List of executor info with enriched error fields.
+
+        Returns:
+            List of insights for removed/excluded executors.
+        """
+        insights: List[Insight] = []
+
+        removed = [e for e in executors if not e.is_active and e.remove_reason]
+        excluded = [e for e in executors if e.is_excluded]
+
+        # Classify removals by category
+        removal_counts: Dict[str, int] = {}
+        for exe in removed:
+            cat = classify_executor_removal(exe.remove_reason)
+            removal_counts[cat.value] = removal_counts.get(cat.value, 0) + 1
+
+        for cat_name, count in removal_counts.items():
+            if cat_name == ErrorCategory.UNKNOWN.value:
+                continue
+            if cat_name == ErrorCategory.OOM.value:
+                severity = Severity.CRITICAL
+                recommendation = (
+                    "Increase spark.executor.memory or spark.executor.memoryOverhead. Consider larger instance types."
+                )
+            elif cat_name == ErrorCategory.CONTAINER_KILLED.value:
+                severity = Severity.CRITICAL
+                recommendation = (
+                    "Increase spark.executor.memoryOverhead or cluster node memory. "
+                    "YARN is killing containers that exceed limits."
+                )
+            else:
+                severity = Severity.WARNING
+                recommendation = "Investigate executor remove reasons in the Executors detail view."
+
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.TASK_FAILURE),
+                    category=InsightCategory.TASK_FAILURE,
+                    severity=severity,
+                    title=f"{count} executor(s) removed ({cat_name})",
+                    description=(
+                        f"{count} executor(s) were removed due to {cat_name}. "
+                        f"This may indicate the cluster is under-provisioned."
+                    ),
+                    metric_value=float(count),
+                    threshold_value=0.0,
+                    recommendation=recommendation,
+                )
+            )
+
+        # Flag excluded executors
+        if excluded:
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.TASK_FAILURE),
+                    category=InsightCategory.TASK_FAILURE,
+                    severity=Severity.WARNING,
+                    title=f"{len(excluded)} executor(s) excluded (blacklisted)",
+                    description=(
+                        f"{len(excluded)} executor(s) have been excluded due to repeated "
+                        f"failures. Tasks will not be scheduled on these executors."
+                    ),
+                    metric_value=float(len(excluded)),
+                    threshold_value=0.0,
+                    recommendation=(
+                        "Check executor logs for the root cause. Excluded executors may "
+                        "indicate hardware issues or persistent OOM on specific nodes."
+                    ),
+                )
+            )
+        return insights
+
+    def detect_killed_tasks(self, stages: List[SparkStage], jobs: List[SparkJob]) -> List[Insight]:
+        """Detect excessive killed tasks from speculation or cancellation.
+
+        Args:
+            stages: List of Spark stages with killed task counts.
+            jobs: List of Spark jobs with killed task counts.
+
+        Returns:
+            List of insights for excessive killed tasks.
+        """
+        insights: List[Insight] = []
+
+        total_killed = sum(s.num_killed_tasks for s in stages)
+        total_tasks = sum(s.num_tasks for s in stages)
+
+        if total_killed > 0 and total_tasks > 0:
+            killed_pct = (total_killed / total_tasks) * 100
+            if killed_pct > 10:
+                severity = Severity.WARNING
+            else:
+                severity = Severity.INFO
+
+            # Summarize kill reasons across all stages
+            all_reasons: Dict[str, int] = {}
+            for stage in stages:
+                for reason, count in stage.killed_tasks_summary.items():
+                    all_reasons[reason] = all_reasons.get(reason, 0) + count
+
+            reason_str = ", ".join(f"{r}: {c}" for r, c in all_reasons.items()) if all_reasons else "unspecified"
+
+            insights.append(
+                Insight(
+                    id=self._next_id(InsightCategory.STRAGGLER),
+                    category=InsightCategory.STRAGGLER,
+                    severity=severity,
+                    title=f"{total_killed} tasks killed ({killed_pct:.1f}% of total)",
+                    description=(f"{total_killed}/{total_tasks} tasks were killed. Reasons: {reason_str}."),
+                    metric_value=killed_pct,
+                    threshold_value=10.0,
+                    recommendation=(
+                        "Killed tasks from speculation are normal in small numbers. "
+                        "High counts may indicate straggler tasks — consider tuning "
+                        "spark.speculation.quantile and spark.speculation.multiplier."
+                    ),
+                )
+            )
+        return insights
+
+    # ------------------------------------------------------------------
     # Main Entry Point
     # ------------------------------------------------------------------
 
@@ -2422,6 +2628,11 @@ class AnalyticsEngine:
         all_insights.extend(self.detect_caching_issues(storage, executors, cluster))
         all_insights.extend(self.detect_auto_termination(cluster, safe_jobs, executors))
         all_insights.extend(self.detect_dynamic_allocation(executors, cache))
+
+        # Phase D — Error-based detections (from enriched model fields)
+        all_insights.extend(self.detect_stage_failures(safe_stages))
+        all_insights.extend(self.detect_executor_failures(executors))
+        all_insights.extend(self.detect_killed_tasks(safe_stages, safe_jobs))
 
         # Deduplicate by id
         seen_ids: set[str] = set()
