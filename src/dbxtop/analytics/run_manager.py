@@ -140,12 +140,11 @@ class RunManager:
             self._save_run(run)
         except Exception:
             logger.error("Failed to save run %s — data preserved in memory", run.run_id, exc_info=True)
+        else:
+            self._active_run = None
+            self._accumulator = None
 
         logger.info("Run stopped: %s (%s)", run.name, run.run_id)
-
-        # Reset
-        self._active_run = None
-        self._accumulator = None
         return run
 
     def _save_run(self, run: RunSession) -> None:
