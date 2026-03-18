@@ -9,7 +9,7 @@ This file provides guidance to Claude Code when working with code in the `dbxtop
 **Audience:** Data engineers, ML engineers, and platform teams who work with Databricks clusters daily.
 
 **Design Philosophy:**
-- **Read-only observer** — dbxtop never mutates cluster state. All operations are pure monitoring reads. **Exception:** The optional `--keepalive` flag creates a lightweight command execution context and runs `print("keepalive")` to prevent auto-termination.
+- **Read-only observer** — dbxtop never mutates cluster state. All operations are pure monitoring reads. **Exception:** The optional `--keepalive` flag creates a lightweight command execution context and runs `spark.sql("SELECT 1").collect()` to prevent auto-termination.
 - **Graceful degradation** — When the cluster is terminated or the Spark REST API is unreachable, degrade to SDK-only mode rather than crashing.
 - **Single cluster per session** — Focus on depth, not breadth. One cluster, all angles.
 - **Minimal resource footprint** — Efficient 2-tier polling, lazy rendering, no unnecessary data fetching.
