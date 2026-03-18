@@ -28,18 +28,28 @@ from dbxtop.widgets.status_indicator import CLUSTER_STATES
 _STATE_COLOURS: dict[str, str] = {k: v[0] for k, v in CLUSTER_STATES.items()}
 
 _EVENT_COLOURS: dict[str, str] = {
+    # Error events (red)
+    "SPARK_EXCEPTION": "red bold",
+    "DRIVER_UNAVAILABLE": "red bold",
+    "DRIVER_NOT_RESPONDING": "red bold",
+    "NODES_LOST": "red bold",
+    "FAILED_TO_EXPAND_DISK": "red bold",
+    "METASTORE_DOWN": "red bold",
+    "DBFS_DOWN": "red bold",
     "TERMINATING": "red",
     "TERMINATED": "red",
     "ERROR": "red",
+    # Warning events (yellow)
     "UPSIZE_COMPLETED": "yellow",
     "DOWNSCALED": "yellow",
     "AUTOSCALING_STATS_REPORT": "yellow",
+    "RESTARTING": "yellow",
+    "INIT_SCRIPTS_FINISHED": "yellow",
+    # Normal events (green/dim)
     "RUNNING": "green",
     "CREATING": "green",
     "STARTING": "green",
-    "RESTARTING": "yellow",
     "EDITED": "dim",
-    "INIT_SCRIPTS_FINISHED": "dim",
 }
 
 _LIB_STATUS_COLOURS: dict[str, str] = {
