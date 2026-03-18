@@ -241,6 +241,7 @@ class DbxTopApp(App[None]):
         self._header: Optional[ClusterHeader] = None
         self._footer: Optional[KeyboardFooter] = None
         self._run_manager: Optional[RunManager] = None
+        self._last_report_ts: Optional[datetime] = None
 
     # -- compose -------------------------------------------------------------
 
@@ -494,6 +495,10 @@ class DbxTopApp(App[None]):
                 analytics_pane = self.query_one(TabbedContent).get_pane("analytics")
                 for child in analytics_pane.walk_children():
                     if isinstance(child, AnalyticsView) and child._last_report is not None:
+                        # Skip if we already forwarded this exact report
+                        if child._last_report.timestamp == self._last_report_ts:
+                            break
+                        self._last_report_ts = child._last_report.timestamp
                         executors = self._cache.get("executors").data or []
                         self._run_manager.on_report(child._last_report, executors)
                         break
