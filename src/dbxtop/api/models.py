@@ -197,6 +197,8 @@ class SparkJob(BaseModel):
     num_active_tasks: int = 0
     num_completed_tasks: int = 0
     num_failed_tasks: int = 0
+    num_killed_tasks: int = 0
+    killed_tasks_summary: Dict[str, int] = Field(default_factory=dict)
     num_stages: int = 0
     num_active_stages: int = 0
     num_completed_stages: int = 0
@@ -227,6 +229,11 @@ class SparkStage(BaseModel):
     disk_spill_bytes: int = 0
     submission_time: Optional[datetime] = None
     completion_time: Optional[datetime] = None
+    failure_reason: Optional[str] = None
+    num_killed_tasks: int = 0
+    killed_tasks_summary: Dict[str, int] = Field(default_factory=dict)
+    jvm_gc_time_ms: int = 0
+    peak_execution_memory: int = 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -265,6 +272,8 @@ class ExecutorInfo(BaseModel):
     add_time: Optional[datetime] = None
     remove_time: Optional[datetime] = None
     remove_reason: str = ""
+    is_excluded: bool = False
+    excluded_in_stages: List[int] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -304,7 +313,13 @@ class SQLQuery(BaseModel):
     duration_ms: int = 0
     running_jobs: int = 0
     success_jobs: int = 0
-    failed_jobs: int = 0
+    failed_job_ids: List[int] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def failed_jobs(self) -> int:
+        """Number of failed jobs (backward-compatible with int field)."""
+        return len(self.failed_job_ids)
 
 
 # ---------------------------------------------------------------------------
