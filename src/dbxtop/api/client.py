@@ -228,8 +228,8 @@ class DatabricksClient:
         """Send a lightweight command to keep the cluster alive.
 
         Creates a command execution context on first call (or when the
-        previous one has been destroyed), then executes ``print("keepalive")``
-        on it.
+        previous one has been destroyed), then executes a lightweight Spark
+        query (``SELECT 1``) to reset the cluster auto-termination timer.
 
         Returns:
             ``True`` if the command executed successfully, ``False`` otherwise.
@@ -248,7 +248,7 @@ class DatabricksClient:
                 cluster_id=self._cluster_id,
                 context_id=self._keepalive_context_id,
                 language=Language.PYTHON,
-                command='print("keepalive")',
+                command='spark.sql("SELECT 1").collect()',
             )
             return result.status is not None and result.status.value == "Finished"
         except Exception as exc:
