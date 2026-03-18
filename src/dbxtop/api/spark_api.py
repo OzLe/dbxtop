@@ -21,7 +21,12 @@ from dbxtop.api.models import (
     SQLQuery,
     SparkJob,
     SparkStage,
+    SparkTask,
     StageStatus,
+    TaskMetrics,
+    TaskQuantiles,
+    TaskStatus,
+    TaskSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -255,6 +260,59 @@ class SparkRESTClient:
         data = await self._get("storage/rdd")
         return [_map_rdd(r) for r in data] if data else []
 
+    # -- on-demand fetchers (not polled) ------------------------------------
+
+    async def get_stage_tasks(
+        self,
+        stage_id: int,
+        attempt_id: int = 0,
+        status: str = "failed",
+        offset: int = 0,
+        length: int = 100,
+    ) -> List[SparkTask]:
+        """Fetch task list for a specific stage attempt (on-demand).
+
+        Args:
+            stage_id: Spark stage ID.
+            attempt_id: Stage attempt ID.
+            status: Task status filter (e.g. ``'failed'``).
+            offset: Pagination offset.
+            length: Max tasks to return.
+
+        Returns:
+            List of ``SparkTask`` models.
+        """
+        params = {"status": status, "offset": str(offset), "length": str(length)}
+        data = await self._get(f"stages/{stage_id}/{attempt_id}/taskList", params=params)
+        if not data:
+            return []
+        # API returns a dict keyed by task index; convert to list
+        if isinstance(data, dict):
+            tasks = list(data.values())
+        else:
+            tasks = data
+        return [_map_task(t) for t in tasks]
+
+    async def get_task_summary(
+        self,
+        stage_id: int,
+        attempt_id: int = 0,
+    ) -> Optional[TaskSummary]:
+        """Fetch quantile summary for tasks in a stage (on-demand).
+
+        Args:
+            stage_id: Spark stage ID.
+            attempt_id: Stage attempt ID.
+
+        Returns:
+            A ``TaskSummary`` model, or ``None`` if unavailable.
+        """
+        params = {"quantiles": "0.0,0.25,0.5,0.75,1.0"}
+        data = await self._get(f"stages/{stage_id}/{attempt_id}/taskSummary", params=params)
+        if not data:
+            return None
+        return _map_task_summary(data)
+
     # -- private transport ---------------------------------------------------
 
     @property
@@ -484,4 +542,69 @@ def _map_rdd(raw: Dict[str, Any]) -> RDDInfo:
         storage_level=raw.get("storageLevel", ""),
         memory_used=_safe_int(raw.get("memoryUsed")),
         disk_used=_safe_int(raw.get("diskUsed")),
+    )
+
+
+def _map_task_metrics(raw: Dict[str, Any]) -> TaskMetrics:
+    shuffle_read = raw.get("shuffleReadMetrics") or {}
+    shuffle_write = raw.get("shuffleWriteMetrics") or {}
+    input_m = raw.get("inputMetrics") or {}
+    output_m = raw.get("outputMetrics") or {}
+    return TaskMetrics(
+        executor_run_time_ms=_safe_int(raw.get("executorRunTime")),
+        executor_cpu_time_ns=_safe_int(raw.get("executorCpuTime")),
+        jvm_gc_time_ms=_safe_int(raw.get("jvmGcTime")),
+        memory_bytes_spilled=_safe_int(raw.get("memoryBytesSpilled")),
+        disk_bytes_spilled=_safe_int(raw.get("diskBytesSpilled")),
+        peak_execution_memory=_safe_int(raw.get("peakExecutionMemory")),
+        input_bytes=_safe_int(input_m.get("bytesRead")),
+        input_records=_safe_int(input_m.get("recordsRead")),
+        output_bytes=_safe_int(output_m.get("bytesWritten")),
+        output_records=_safe_int(output_m.get("recordsWritten")),
+        shuffle_read_bytes=_safe_int(shuffle_read.get("remoteBytesRead")),
+        shuffle_write_bytes=_safe_int(shuffle_write.get("bytesWritten")),
+        shuffle_fetch_wait_time_ms=_safe_int(shuffle_read.get("fetchWaitTime")),
+    )
+
+
+def _map_task(raw: Dict[str, Any]) -> SparkTask:
+    status_str = str(raw.get("status", "PENDING")).upper()
+    try:
+        status = TaskStatus(status_str)
+    except ValueError:
+        status = TaskStatus.PENDING
+
+    metrics_raw = raw.get("taskMetrics") or {}
+    return SparkTask(
+        task_id=_safe_int(raw.get("taskId")),
+        index=_safe_int(raw.get("index")),
+        attempt=_safe_int(raw.get("attempt")),
+        status=status,
+        executor_id=str(raw.get("executorId", "")),
+        host=raw.get("host", ""),
+        launch_time=_parse_spark_ts(raw.get("launchTime")),
+        duration_ms=_safe_int(raw.get("duration")),
+        error_message=raw.get("errorMessage") or None,
+        speculative=bool(raw.get("speculative", False)),
+        task_locality=raw.get("taskLocality", ""),
+        metrics=_map_task_metrics(metrics_raw),
+    )
+
+
+def _map_quantiles(raw: Dict[str, Any], key: str, quantiles: List[float]) -> TaskQuantiles:
+    values_raw = raw.get(key)
+    if not values_raw or not isinstance(values_raw, list):
+        return TaskQuantiles(quantiles=quantiles, values=[])
+    return TaskQuantiles(quantiles=quantiles, values=[float(v) for v in values_raw])
+
+
+def _map_task_summary(raw: Dict[str, Any]) -> TaskSummary:
+    quantiles = raw.get("quantiles", [0.0, 0.25, 0.5, 0.75, 1.0])
+    return TaskSummary(
+        executor_run_time=_map_quantiles(raw, "executorRunTime", quantiles),
+        jvm_gc_time=_map_quantiles(raw, "jvmGcTime", quantiles),
+        memory_bytes_spilled=_map_quantiles(raw, "memoryBytesSpilled", quantiles),
+        disk_bytes_spilled=_map_quantiles(raw, "diskBytesSpilled", quantiles),
+        shuffle_read_bytes=_map_quantiles(raw, "shuffleReadBytes", quantiles),
+        input_bytes=_map_quantiles(raw, "inputBytes", quantiles),
     )

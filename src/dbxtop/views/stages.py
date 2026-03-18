@@ -188,6 +188,18 @@ class StagesView(BaseView):
         lines += ["", "[dim]Press Escape to close[/dim]"]
         return "\n".join(lines)
 
+    def get_selected_stage(self) -> Optional[SparkStage]:
+        """Return the SparkStage model for the currently selected row."""
+        try:
+            table = self.query_one("#stages-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            stage_id = int(row_cells[0])
+        except Exception:
+            return None
+        return next((s for s in self._current_stages if s.stage_id == stage_id), None)
+
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""
         self._sort_index = (self._sort_index + 1) % len(_SORT_KEYS)
