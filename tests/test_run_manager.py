@@ -425,7 +425,7 @@ class TestStopRun:
             mock_save.assert_called_once_with(run)
 
     def test_handles_save_failure_gracefully(self) -> None:
-        """When _save_run raises, stop_run still returns the run and resets state."""
+        """When _save_run raises, stop_run preserves run data in memory."""
         mgr = RunManager(CLUSTER_ID)
         mgr.start_run("test", {})
 
@@ -434,10 +434,10 @@ class TestStopRun:
 
         assert run is not None
         assert run.name == "test"
-        # State is still reset despite save failure
-        assert not mgr.is_recording
-        assert mgr.active_run is None
-        assert mgr.accumulator is None
+        # Run data preserved in memory so it can be retried or exported
+        assert mgr.is_recording
+        assert mgr.active_run is run
+        assert mgr.accumulator is not None
 
     def test_returns_finalized_run(self) -> None:
         """stop_run returns the run with stopped_at and insights populated."""
