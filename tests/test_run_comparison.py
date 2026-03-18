@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
+from unittest.mock import MagicMock, patch
 
 from dbxtop.analytics.models import DiagnosticReport, HealthScore
 from dbxtop.analytics.run import AccumulatedInsightExport, RunSession
@@ -157,3 +158,89 @@ class TestFormatDelta:
         result = _format_delta(0.0)
         assert "0" in result
         assert "=" in result
+
+
+class TestOnRunListDismissed:
+    """Tests for DbxTopApp._on_run_list_dismissed callback."""
+
+    def _make_app(self) -> MagicMock:
+        """Create a mock app with _on_run_list_dismissed from the real class."""
+        from dbxtop.app import DbxTopApp
+
+        app = MagicMock(spec=DbxTopApp)
+        app._cluster_id = "cluster-123"
+        app._on_run_list_dismissed = DbxTopApp._on_run_list_dismissed.__get__(app)
+        return app
+
+    def test_none_result_is_noop(self) -> None:
+        app = self._make_app()
+        app._on_run_list_dismissed(None)
+        app.push_screen.assert_not_called()
+
+    def test_empty_list_is_noop(self) -> None:
+        app = self._make_app()
+        app._on_run_list_dismissed([])
+        app.push_screen.assert_not_called()
+
+    def test_single_id_is_noop(self) -> None:
+        app = self._make_app()
+        app._on_run_list_dismissed(["run-1"])
+        app.push_screen.assert_not_called()
+
+    def test_two_ids_pushes_comparison_screen(self) -> None:
+        from dbxtop.views.run_comparison import RunComparisonScreen
+
+        app = self._make_app()
+
+        now = datetime.now(timezone.utc)
+        run_a = _make_run("before")
+        run_a.run_id = "run-a"
+        run_a.started_at = now - timedelta(hours=1)
+        run_b = _make_run("after")
+        run_b.run_id = "run-b"
+        run_b.started_at = now
+
+        with patch("dbxtop.analytics.run_manager.RunManager.load_run") as mock_load:
+            mock_load.side_effect = lambda cid, rid: {"run-a": run_a, "run-b": run_b}[rid]
+            app._on_run_list_dismissed(["run-a", "run-b"])
+
+        app.push_screen.assert_called_once()
+        screen_arg = app.push_screen.call_args[0][0]
+        assert isinstance(screen_arg, RunComparisonScreen)
+
+    def test_missing_run_shows_error(self) -> None:
+        app = self._make_app()
+
+        with patch("dbxtop.analytics.run_manager.RunManager.load_run", return_value=None):
+            app._on_run_list_dismissed(["run-a", "run-b"])
+
+        app.notify.assert_called_once()
+        assert "Could not load" in app.notify.call_args[0][0]
+        app.push_screen.assert_not_called()
+
+    def test_orders_runs_by_start_time(self) -> None:
+        """Earlier run should be run_a (before) in the comparison."""
+        from dbxtop.app import DbxTopApp
+        from dbxtop.views.run_comparison import RunComparisonScreen
+
+        app = MagicMock(spec=DbxTopApp)
+        app._cluster_id = "cluster-123"
+        bound = DbxTopApp._on_run_list_dismissed.__get__(app)
+
+        now = datetime.now(timezone.utc)
+        run_early = _make_run("early")
+        run_early.run_id = "run-early"
+        run_early.started_at = now - timedelta(hours=2)
+        run_late = _make_run("late")
+        run_late.run_id = "run-late"
+        run_late.started_at = now
+
+        # Pass late first, early second — should still order correctly
+        with patch("dbxtop.analytics.run_manager.RunManager.load_run") as mock_load:
+            mock_load.side_effect = lambda cid, rid: {"run-late": run_late, "run-early": run_early}[rid]
+            bound(["run-late", "run-early"])
+
+        screen_arg = app.push_screen.call_args[0][0]
+        assert isinstance(screen_arg, RunComparisonScreen)
+        assert screen_arg._comp.run_a.run_id == "run-early"
+        assert screen_arg._comp.run_b.run_id == "run-late"

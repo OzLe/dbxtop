@@ -19,10 +19,6 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
       - name: Determine bump type from PR labels
         id: bump
         env:
@@ -36,10 +32,11 @@ jobs:
             echo "type=patch" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Bump version
+      - name: Compute next version from latest tag
         id: version
         run: |
-          CURRENT=$(python -c "import re; print(re.search(r'__version__ = \"(.+?)\"', open('src/dbxtop/__init__.py').read()).group(1))")
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match "v*" 2>/dev/null || echo "v0.0.0")
+          CURRENT="${LATEST_TAG#v}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
           BUMP_TYPE="${{ steps.bump.outputs.type }}"
@@ -54,25 +51,14 @@ jobs:
           NEW_VERSION="$MAJOR.$MINOR.$PATCH"
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "previous=$CURRENT" >> "$GITHUB_OUTPUT"
-
-          sed -i "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" src/dbxtop/__init__.py
           echo "Bumped version: $CURRENT -> $NEW_VERSION ($BUMP_TYPE)"
 
-      - name: Commit and tag
+      - name: Create tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/dbxtop/__init__.py
-          git commit -m "Bump version to v${{ steps.version.outputs.version }}"
-          git tag -f "v${{ steps.version.outputs.version }}"
-          git push origin main --tags --force
-
-      - name: Back-merge version bump to develop
-        run: |
-          git checkout develop
-          git pull origin develop
-          git merge main --no-edit -m "Merge version bump v${{ steps.version.outputs.version }} from main"
-          git push origin develop
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
 
       - name: Create GitHub Release
         env:
