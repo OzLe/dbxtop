@@ -79,7 +79,7 @@ class ExecutorsView(BaseView):
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render executors table from cache."""
         slot = cache.get("executors")
-        self.update_stale_status(slot, "executors-table")
+        self.update_stale_status(slot, "exec-table")
         executors: Optional[List[ExecutorInfo]] = slot.data
         if executors is None:
             return
