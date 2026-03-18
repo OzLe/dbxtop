@@ -143,29 +143,50 @@ class StagesView(BaseView):
         # Escape brackets in data values to prevent Rich markup parsing errors
         name = stage.name.replace("[", "\\[")
 
-        return (
-            f"[bold]Stage {stage.stage_id} (attempt {stage.attempt_id})[/bold]\n\n"
-            f"  Name:        {name}\n"
-            f"  Status:      {stage.status.value}\n"
-            f"  Submitted:   {submitted}\n"
-            f"  Completed:   {completed}\n\n"
-            f"[bold]Tasks[/bold]\n"
-            f"  Total:     {stage.num_tasks}\n"
-            f"  Active:    {stage.num_active_tasks}\n"
-            f"  Complete:  {stage.num_complete_tasks}\n"
-            f"  Failed:    {stage.num_failed_tasks}\n\n"
-            f"[bold]I/O[/bold]\n"
-            f"  Input:         {format_bytes(stage.input_bytes)} ({stage.input_records:,} records)\n"
-            f"  Output:        {format_bytes(stage.output_bytes)} ({stage.output_records:,} records)\n"
-            f"  Shuffle Read:  {format_bytes(stage.shuffle_read_bytes)}\n"
-            f"  Shuffle Write: {format_bytes(stage.shuffle_write_bytes)}\n\n"
-            f"[bold]Resources[/bold]\n"
-            f"  Executor Time: {format_duration(stage.executor_run_time_ms)}\n"
-            f"  CPU Time:      {format_duration(stage.executor_cpu_time_ns // 1_000_000)}\n"
-            f"  Memory Spill:  {format_bytes(stage.memory_spill_bytes)}\n"
-            f"  Disk Spill:    {format_bytes(stage.disk_spill_bytes)}\n\n"
-            f"[dim]Press Escape to close[/dim]"
-        )
+        lines = [
+            f"[bold]Stage {stage.stage_id} (attempt {stage.attempt_id})[/bold]\n",
+            f"  Name:        {name}",
+            f"  Status:      {stage.status.value}",
+            f"  Submitted:   {submitted}",
+            f"  Completed:   {completed}\n",
+            "[bold]Tasks[/bold]",
+            f"  Total:     {stage.num_tasks}",
+            f"  Active:    {stage.num_active_tasks}",
+            f"  Complete:  {stage.num_complete_tasks}",
+            f"  Failed:    {stage.num_failed_tasks}",
+            f"  Killed:    {stage.num_killed_tasks}",
+        ]
+
+        if stage.killed_tasks_summary:
+            for reason, count in stage.killed_tasks_summary.items():
+                reason_escaped = reason.replace("[", "\\[")
+                lines.append(f"    {reason_escaped}: {count}")
+
+        lines += [
+            "",
+            "[bold]I/O[/bold]",
+            f"  Input:         {format_bytes(stage.input_bytes)} ({stage.input_records:,} records)",
+            f"  Output:        {format_bytes(stage.output_bytes)} ({stage.output_records:,} records)",
+            f"  Shuffle Read:  {format_bytes(stage.shuffle_read_bytes)}",
+            f"  Shuffle Write: {format_bytes(stage.shuffle_write_bytes)}\n",
+            "[bold]Resources[/bold]",
+            f"  Executor Time:    {format_duration(stage.executor_run_time_ms)}",
+            f"  CPU Time:         {format_duration(stage.executor_cpu_time_ns // 1_000_000)}",
+            f"  JVM GC Time:      {format_duration(stage.jvm_gc_time_ms)}",
+            f"  Peak Exec Memory: {format_bytes(stage.peak_execution_memory)}",
+            f"  Memory Spill:     {format_bytes(stage.memory_spill_bytes)}",
+            f"  Disk Spill:       {format_bytes(stage.disk_spill_bytes)}",
+        ]
+
+        if stage.failure_reason:
+            reason_escaped = stage.failure_reason.replace("[", "\\[")
+            # Truncate very long stack traces for the modal
+            if len(reason_escaped) > 2000:
+                reason_escaped = reason_escaped[:2000] + "\n  ... (truncated)"
+            lines += ["", "[bold red]Failure Reason[/bold red]", f"  {reason_escaped}"]
+
+        lines += ["", "[dim]Press Escape to close[/dim]"]
+        return "\n".join(lines)
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""

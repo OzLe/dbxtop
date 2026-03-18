@@ -387,6 +387,8 @@ def _map_spark_job(raw: Dict[str, Any]) -> SparkJob:
         num_active_tasks=_safe_int(raw.get("numActiveTasks")),
         num_completed_tasks=_safe_int(raw.get("numCompletedTasks")),
         num_failed_tasks=_safe_int(raw.get("numFailedTasks")),
+        num_killed_tasks=_safe_int(raw.get("numKilledTasks")),
+        killed_tasks_summary=raw.get("killedTasksSummary") or {},
         num_stages=_safe_int(raw.get("numStages")) or len(raw.get("stageIds", [])),
         num_active_stages=_safe_int(raw.get("numActiveStages")),
         num_completed_stages=_safe_int(raw.get("numCompletedStages")),
@@ -423,6 +425,11 @@ def _map_spark_stage(raw: Dict[str, Any]) -> SparkStage:
         disk_spill_bytes=_safe_int(raw.get("diskBytesSpilled")),
         submission_time=_parse_spark_ts(raw.get("submissionTime")),
         completion_time=_parse_spark_ts(raw.get("completionTime")),
+        failure_reason=raw.get("failureReason") or None,
+        num_killed_tasks=_safe_int(raw.get("numKilledTasks")),
+        killed_tasks_summary=raw.get("killedTasksSummary") or {},
+        jvm_gc_time_ms=_safe_int(raw.get("jvmGCTime")),
+        peak_execution_memory=_safe_int(raw.get("peakExecutionMemory")),
     )
 
 
@@ -450,6 +457,8 @@ def _map_executor(raw: Dict[str, Any]) -> ExecutorInfo:
         add_time=_parse_spark_ts(raw.get("addTime")),
         remove_time=_parse_spark_ts(raw.get("removeTime")),
         remove_reason=raw.get("removeReason", ""),
+        is_excluded=bool(raw.get("isExcluded") or raw.get("isBlacklisted", False)),
+        excluded_in_stages=raw.get("excludedInStages") or raw.get("blacklistedInStages") or [],
     )
 
 
@@ -462,7 +471,7 @@ def _map_sql(raw: Dict[str, Any]) -> SQLQuery:
         duration_ms=_safe_int(raw.get("duration")),
         running_jobs=len(raw.get("runningJobIds", [])),
         success_jobs=len(raw.get("successJobIds", [])),
-        failed_jobs=len(raw.get("failedJobIds", [])),
+        failed_job_ids=raw.get("failedJobIds") or [],
     )
 
 
