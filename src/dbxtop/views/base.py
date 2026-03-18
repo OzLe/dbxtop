@@ -28,6 +28,7 @@ class BaseView(Widget):
     current_sort_key: reactive[str] = reactive("")
     sort_reverse: reactive[bool] = reactive(False)
     filter_text: reactive[str] = reactive("")
+    failures_only: reactive[bool] = reactive(False)
 
     @abstractmethod
     def refresh_data(self, cache: DataCache) -> None:

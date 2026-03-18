@@ -197,6 +197,8 @@ class SparkJob(BaseModel):
     num_active_tasks: int = 0
     num_completed_tasks: int = 0
     num_failed_tasks: int = 0
+    num_killed_tasks: int = 0
+    killed_tasks_summary: Dict[str, int] = Field(default_factory=dict)
     num_stages: int = 0
     num_active_stages: int = 0
     num_completed_stages: int = 0
@@ -227,12 +229,94 @@ class SparkStage(BaseModel):
     disk_spill_bytes: int = 0
     submission_time: Optional[datetime] = None
     completion_time: Optional[datetime] = None
+    failure_reason: Optional[str] = None
+    num_killed_tasks: int = 0
+    killed_tasks_summary: Dict[str, int] = Field(default_factory=dict)
+    jvm_gc_time_ms: int = 0
+    peak_execution_memory: int = 0
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def spill_bytes(self) -> int:
         """Total spill (memory + disk)."""
         return self.memory_spill_bytes + self.disk_spill_bytes
+
+
+class TaskStatus(str, enum.Enum):
+    """Spark task status."""
+
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    KILLED = "KILLED"
+    PENDING = "PENDING"
+
+
+class TaskMetrics(BaseModel):
+    """Per-task execution metrics from the Spark REST API."""
+
+    executor_run_time_ms: int = 0
+    executor_cpu_time_ns: int = 0
+    jvm_gc_time_ms: int = 0
+    memory_bytes_spilled: int = 0
+    disk_bytes_spilled: int = 0
+    peak_execution_memory: int = 0
+    input_bytes: int = 0
+    input_records: int = 0
+    output_bytes: int = 0
+    output_records: int = 0
+    shuffle_read_bytes: int = 0
+    shuffle_write_bytes: int = 0
+    shuffle_fetch_wait_time_ms: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def gc_ratio(self) -> float:
+        """Fraction of executor time spent in GC (0.0–1.0)."""
+        if self.executor_run_time_ms <= 0:
+            return 0.0
+        return self.jvm_gc_time_ms / self.executor_run_time_ms
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_spill(self) -> bool:
+        """True if any memory or disk spill occurred."""
+        return self.memory_bytes_spilled > 0 or self.disk_bytes_spilled > 0
+
+
+class SparkTask(BaseModel):
+    """A single Spark task as reported by the task list endpoint."""
+
+    task_id: int
+    index: int = 0
+    attempt: int = 0
+    status: TaskStatus = TaskStatus.PENDING
+    executor_id: str = ""
+    host: str = ""
+    launch_time: Optional[datetime] = None
+    duration_ms: int = 0
+    error_message: Optional[str] = None
+    speculative: bool = False
+    task_locality: str = ""
+    metrics: TaskMetrics = Field(default_factory=TaskMetrics)
+
+
+class TaskQuantiles(BaseModel):
+    """Quantile distribution for a single metric across tasks in a stage."""
+
+    quantiles: List[float] = Field(default_factory=list)
+    values: List[float] = Field(default_factory=list)
+
+
+class TaskSummary(BaseModel):
+    """Quantile-based summary of task metrics for a stage, used for skew detection."""
+
+    executor_run_time: TaskQuantiles = Field(default_factory=TaskQuantiles)
+    jvm_gc_time: TaskQuantiles = Field(default_factory=TaskQuantiles)
+    memory_bytes_spilled: TaskQuantiles = Field(default_factory=TaskQuantiles)
+    disk_bytes_spilled: TaskQuantiles = Field(default_factory=TaskQuantiles)
+    shuffle_read_bytes: TaskQuantiles = Field(default_factory=TaskQuantiles)
+    input_bytes: TaskQuantiles = Field(default_factory=TaskQuantiles)
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +349,8 @@ class ExecutorInfo(BaseModel):
     add_time: Optional[datetime] = None
     remove_time: Optional[datetime] = None
     remove_reason: str = ""
+    is_excluded: bool = False
+    excluded_in_stages: List[int] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -304,7 +390,13 @@ class SQLQuery(BaseModel):
     duration_ms: int = 0
     running_jobs: int = 0
     success_jobs: int = 0
-    failed_jobs: int = 0
+    failed_job_ids: List[int] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def failed_jobs(self) -> int:
+        """Number of failed jobs (backward-compatible with int field)."""
+        return len(self.failed_job_ids)
 
 
 # ---------------------------------------------------------------------------

@@ -79,7 +79,7 @@ class ExecutorsView(BaseView):
     def refresh_data(self, cache: DataCache) -> None:
         """Re-render executors table from cache."""
         slot = cache.get("executors")
-        self.update_stale_status(slot, "executors-table")
+        self.update_stale_status(slot, "exec-table")
         executors: Optional[List[ExecutorInfo]] = slot.data
         if executors is None:
             return
@@ -189,6 +189,94 @@ class ExecutorsView(BaseView):
         self._sort_index = (self._sort_index + 1) % len(_SORT_KEYS)
         self.cycle_sort(_SORT_KEYS[self._sort_index])
 
+    def get_selected_executor(self, cache: DataCache) -> Optional[ExecutorInfo]:
+        """Return the ExecutorInfo model for the currently selected row."""
+        try:
+            table = self.query_one("#exec-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            eid = str(row_cells[0]).strip()
+            if "driver" in eid.lower():
+                eid = "driver"
+        except Exception:
+            return None
+        slot = cache.get("executors")
+        executors: Optional[List[ExecutorInfo]] = slot.data
+        if executors is None:
+            return None
+        return next((e for e in executors if e.executor_id == eid), None)
+
+    def get_selected_detail(self, cache: DataCache) -> Optional[str]:
+        """Return detail text for the currently selected executor row."""
+        try:
+            table = self.query_one("#exec-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            # First column is the ID (may have Rich markup for driver)
+            eid_raw = row_cells[0]
+            # Strip Rich markup to get raw ID
+            eid = str(eid_raw).strip()
+            if "driver" in eid.lower():
+                eid = "driver"
+        except Exception:
+            return None
+
+        slot = cache.get("executors")
+        executors: Optional[List[ExecutorInfo]] = slot.data
+        if executors is None:
+            return None
+
+        exe = next((e for e in executors if e.executor_id == eid), None)
+        if exe is None:
+            return None
+
+        now = datetime.now(timezone.utc)
+        uptime = "--"
+        if exe.add_time:
+            uptime = format_duration(int((now - exe.add_time).total_seconds() * 1000))
+
+        lines = [
+            f"[bold]Executor {exe.executor_id}[/bold]\n",
+            f"  Host:       {exe.host_port}",
+            f"  Status:     {'Active' if exe.is_active else 'Dead'}",
+            f"  Cores:      {exe.total_cores}",
+            f"  Uptime:     {uptime}\n",
+            "[bold]Tasks[/bold]",
+            f"  Active:     {exe.active_tasks}",
+            f"  Completed:  {exe.completed_tasks}",
+            f"  Failed:     {exe.failed_tasks}",
+            f"  Duration:   {format_duration(exe.total_duration_ms)}\n",
+            "[bold]Memory[/bold]",
+            f"  Storage Used:    {format_bytes(exe.memory_used)}",
+            f"  Storage Max:     {format_bytes(exe.max_memory)}",
+            f"  Peak JVM Heap:   {format_bytes(exe.peak_jvm_heap)}",
+            f"  Peak Off-Heap:   {format_bytes(exe.peak_jvm_off_heap)}",
+            f"  Disk Used:       {format_bytes(exe.disk_used)}\n",
+            "[bold]I/O[/bold]",
+            f"  Input:         {format_bytes(exe.total_input_bytes)}",
+            f"  Shuffle Read:  {format_bytes(exe.total_shuffle_read)}",
+            f"  Shuffle Write: {format_bytes(exe.total_shuffle_write)}",
+            f"  RDD Blocks:    {exe.rdd_blocks}\n",
+            "[bold]GC[/bold]",
+            f"  GC Time:    {format_duration(exe.total_gc_time_ms)}",
+            f"  GC Ratio:   {exe.gc_ratio * 100:.1f}%",
+        ]
+
+        if exe.is_excluded:
+            stages_str = ", ".join(str(s) for s in exe.excluded_in_stages) if exe.excluded_in_stages else "all"
+            lines += ["", "[bold yellow]Excluded[/bold yellow]", f"  Excluded in stages: {stages_str}"]
+
+        if not exe.is_active and exe.remove_reason:
+            reason_escaped = exe.remove_reason.replace("[", "\\[")
+            if len(reason_escaped) > 2000:
+                reason_escaped = reason_escaped[:2000] + "\n  ... (truncated)"
+            lines += ["", "[bold red]Remove Reason[/bold red]", f"  {reason_escaped}"]
+
+        lines += ["", "[dim]Press Escape to close[/dim]"]
+        return "\n".join(lines)
+
     @staticmethod
     def _build_rows(executors: List[ExecutorInfo]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -199,7 +287,10 @@ class ExecutorsView(BaseView):
             id_display = "[bold]driver[/bold]" if exe.is_driver else exe.executor_id
 
             # Status
-            if exe.is_active:
+            if exe.is_active and exe.is_excluded:
+                status_display = "[yellow bold]Excluded[/yellow bold]"
+                status_str = "Excluded"
+            elif exe.is_active:
                 status_display = "[green]Active[/green]"
                 status_str = "Active"
             else:

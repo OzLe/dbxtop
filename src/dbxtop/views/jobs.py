@@ -83,7 +83,11 @@ class JobsView(BaseView):
         # Build row dicts
         rows = self._build_rows(jobs)
 
-        # Apply filter
+        # Apply failures-only filter
+        if self.failures_only:
+            rows = [r for r in rows if r["status_str"] == "FAILED" or r.get("num_failed_tasks", 0) > 0]
+
+        # Apply text filter
         if self.filter_text:
             rows = self.filter_rows(rows, self.filter_text, ["name", "status_str"])
 
@@ -135,26 +139,58 @@ class JobsView(BaseView):
         name = job.name.replace("[", "\\[")
         stage_ids = str(job.stage_ids).replace("[", "\\[")
 
-        return (
-            f"[bold]Job {job.job_id}[/bold]\n\n"
-            f"  Description:  {name}\n"
-            f"  Status:       {job.status.value}\n"
-            f"  Submitted:    {submitted}\n"
-            f"  Completed:    {completed}\n"
-            f"  Duration:     {duration}\n\n"
-            f"[bold]Tasks[/bold]\n"
-            f"  Total:     {job.num_tasks}\n"
-            f"  Active:    {job.num_active_tasks}\n"
-            f"  Completed: {job.num_completed_tasks}\n"
-            f"  Failed:    {job.num_failed_tasks}\n\n"
-            f"[bold]Stages[/bold]\n"
-            f"  Total:     {job.num_stages}\n"
-            f"  Active:    {job.num_active_stages}\n"
-            f"  Completed: {job.num_completed_stages}\n"
-            f"  Failed:    {job.num_failed_stages}\n"
-            f"  IDs:       {stage_ids}\n\n"
-            f"[dim]Press Escape to close[/dim]"
-        )
+        failed_tasks_line = f"  Failed:    {job.num_failed_tasks}"
+        if job.num_failed_tasks > 0:
+            failed_tasks_line = f"  Failed:    [red]{job.num_failed_tasks}[/red]"
+        killed_tasks_line = f"  Killed:    {job.num_killed_tasks}"
+
+        failed_stages_line = f"  Failed:    {job.num_failed_stages}"
+        if job.num_failed_stages > 0:
+            failed_stages_line = f"  Failed:    [red]{job.num_failed_stages}[/red]"
+
+        lines = [
+            f"[bold]Job {job.job_id}[/bold]\n",
+            f"  Description:  {name}",
+            f"  Status:       {job.status.value}",
+            f"  Submitted:    {submitted}",
+            f"  Completed:    {completed}",
+            f"  Duration:     {duration}\n",
+            "[bold]Tasks[/bold]",
+            f"  Total:     {job.num_tasks}",
+            f"  Active:    {job.num_active_tasks}",
+            f"  Completed: {job.num_completed_tasks}",
+            failed_tasks_line,
+            killed_tasks_line,
+        ]
+
+        if job.killed_tasks_summary:
+            for reason, count in job.killed_tasks_summary.items():
+                reason_escaped = reason.replace("[", "\\[")
+                lines.append(f"    {reason_escaped}: {count}")
+
+        lines += [
+            "",
+            "[bold]Stages[/bold]",
+            f"  Total:     {job.num_stages}",
+            f"  Active:    {job.num_active_stages}",
+            f"  Completed: {job.num_completed_stages}",
+            failed_stages_line,
+            f"  IDs:       {stage_ids}\n",
+            "[dim]Press Escape to close[/dim]",
+        ]
+        return "\n".join(lines)
+
+    def get_selected_job(self) -> Optional[SparkJob]:
+        """Return the SparkJob model for the currently selected row."""
+        try:
+            table = self.query_one("#jobs-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            job_id = int(row_cells[0])
+        except Exception:
+            return None
+        return next((j for j in self._current_jobs if j.job_id == job_id), None)
 
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""
@@ -208,6 +244,7 @@ class JobsView(BaseView):
                     "duration": duration,
                     "submitted": submitted,
                     "num_completed_tasks": job.num_completed_tasks,
+                    "num_failed_tasks": job.num_failed_tasks,
                     "num_completed_stages": job.num_completed_stages,
                     "elapsed_ms": elapsed_ms,
                     "submission_time": job.submission_time,

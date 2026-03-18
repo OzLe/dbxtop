@@ -142,6 +142,18 @@ class SQLView(BaseView):
             f"[dim]Press Escape to close[/dim]"
         )
 
+    def get_selected_query(self) -> Optional[SQLQuery]:
+        """Return the SQLQuery model for the currently selected row."""
+        try:
+            table = self.query_one("#sql-table", DataTable)
+            if table.cursor_row is None or table.cursor_row < 0:
+                return None
+            row_cells = table.get_row_at(table.cursor_row)
+            exec_id = int(row_cells[0])
+        except Exception:
+            return None
+        return next((q for q in self._current_queries if q.execution_id == exec_id), None)
+
     def cycle_sort_column(self) -> None:
         """Advance to the next sort column."""
         self._sort_index = (self._sort_index + 1) % len(_SORT_KEYS)
