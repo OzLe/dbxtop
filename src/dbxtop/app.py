@@ -310,10 +310,8 @@ class DbxTopApp(App[None]):
             self._show_error(f"Failed to create Databricks client: {exc}")
             return
 
-        # Attempt Spark REST client setup (non-fatal if it fails)
-        await self._try_init_spark_client()
-
-        # Start polling
+        # Start polling immediately — don't block on Spark REST client setup
+        #
         self._poller = MetricsPoller(
             dbx_client=self._dbx_client,
             spark_client=self._spark_client,
@@ -322,6 +320,9 @@ class DbxTopApp(App[None]):
             settings=self._settings,
         )
         self._poller.start()
+
+        # Attempt Spark REST client setup in background (non-fatal if it fails)
+        self.call_later(self._try_init_spark_client)
 
     async def _try_init_spark_client(self) -> None:
         """Attempt to initialise the Spark REST client.
