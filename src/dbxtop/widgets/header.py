@@ -47,6 +47,7 @@ class ClusterHeader(Static):
         self._poll_interval = poll_interval
         self._cluster: Optional[ClusterInfo] = None
         self._stale = False
+        self._error: Optional[str] = None
 
     def on_mount(self) -> None:
         """Start the 1-second countdown/uptime ticker."""
@@ -71,6 +72,7 @@ class ClusterHeader(Static):
         slot = cache.get("cluster")
         self._cluster = slot.data
         self._stale = slot.stale
+        self._error = slot.error
         self.reset_countdown()
         self._render_bar()
 
@@ -90,6 +92,8 @@ class ClusterHeader(Static):
                 parts.append(f"up {format_duration(uptime_ms)}")
             else:
                 parts.append("up --")
+        elif self._error:
+            parts.append(f"[red]{self._error}[/red]")
         else:
             parts.append("connecting...")
 
