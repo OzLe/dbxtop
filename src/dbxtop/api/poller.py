@@ -235,6 +235,8 @@ class MetricsPoller:
             for slot_name, result in zip(active_sdk_slots, sdk_results):
                 if isinstance(result, BaseException):
                     self._handle_error(slot_name, result)
+                    # Still notify so the header can show the error state
+                    updated.add(slot_name)
                 else:
                     self._cache.update(slot_name, result)
                     self._reset_backoff(slot_name)
