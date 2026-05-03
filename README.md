@@ -7,7 +7,9 @@
 
 Real-time terminal dashboard for Databricks/Spark clusters. Think `htop`, but for your Spark jobs.
 
-<!-- TODO: Add demo GIF once recorded with vhs/asciinema -->
+<p align="center">
+  <img src="docs/screenshots/04-executors.svg" alt="dbxtop executors view — memory bars, GC%, sparkline trends per executor" width="900">
+</p>
 
 ## Features
 
@@ -29,6 +31,38 @@ Real-time terminal dashboard for Databricks/Spark clusters. Think `htop`, but fo
 - OAuth token auto-refresh: handles token expiry transparently
 - Dark and light themes
 - Read-only: never mutates cluster state
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Cluster overview</strong><br>State, resources, Spark config, events, libraries</td>
+    <td align="center" width="50%"><strong>Spark jobs</strong><br>Progress bars, stage counts, duration, status</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/01-cluster.svg" alt="Cluster view"></td>
+    <td><img src="docs/screenshots/02-jobs.svg" alt="Jobs view"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Stages</strong><br>Task progress, shuffle read/write, spill, I/O bytes</td>
+    <td align="center"><strong>SQL queries</strong><br>Running and completed queries with durations</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-stages.svg" alt="Stages view"></td>
+    <td><img src="docs/screenshots/05-sql.svg" alt="SQL view"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Storage</strong><br>Cached RDDs/DataFrames, memory and disk usage</td>
+    <td align="center"><strong>Analytics</strong><br>Health score, top issues, recommendations</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/06-storage.svg" alt="Storage view"></td>
+    <td><img src="docs/screenshots/07-analytics.svg" alt="Analytics view"></td>
+  </tr>
+</table>
+
+> Screenshots are generated from synthetic demo data via
+> `python scripts/generate_demo_screenshots.py` — no live cluster required.
 
 ## Install
 
