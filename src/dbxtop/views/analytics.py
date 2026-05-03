@@ -469,8 +469,9 @@ def _progress_bar(pct: float, width: int = 14) -> str:
         width: Total bar width in characters.
 
     Returns:
-        String like ``[========      ]``.
+        String like ``\\[========      ]`` — leading bracket is escaped so
+        Rich does not try to parse the bar as markup.
     """
     filled = int(round(pct / 100 * width))
     filled = max(0, min(width, filled))
-    return "[" + "=" * filled + " " * (width - filled) + "]"
+    return "\\[" + "=" * filled + " " * (width - filled) + "]"
