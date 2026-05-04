@@ -173,15 +173,14 @@ ruff format --check src/ tests/
 textual-dev run --dev "dbxtop -c CLUSTER_ID -p PROFILE"
 ```
 
+For module structure, data flow, design rationale, and the full Databricks
+SDK + Spark REST API surface used by dbxtop, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Version Management
 
-The version is defined in `src/dbxtop/__init__.py` as the single source of truth. `pyproject.toml` reads it dynamically via `[tool.hatch.version]`. The version is also displayed in the TUI header bar.
+Versions are derived from git tags via [`hatch-vcs`](https://github.com/ofek/hatch-vcs) — there is no version file to edit. `pyproject.toml` declares `version` as `dynamic`, and `src/dbxtop/_version.py` is generated at build time. The version is shown in the TUI header bar.
 
-To bump the version, edit `__version__` in `src/dbxtop/__init__.py`:
-
-```python
-__version__ = "0.2.0"
-```
+Releases are automated: a PR merged into `main` triggers a workflow that bumps the version (default: patch), creates an annotated git tag, and publishes a GitHub Release. Add a `minor` or `major` PR label to override the bump type.
 
 ## Disclaimer
 
