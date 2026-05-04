@@ -254,14 +254,14 @@ Update this table as milestones are completed.
 
 ## Design Documents
 
-The three planning artifacts that inform this implementation are stored in the companion repository:
+The four planning artifacts that inform this implementation live in `docs/planning/`:
 
 | Document | Location | Contents |
 |----------|----------|----------|
-| API Research | `yad2-id-link/.a5c/runs/01KKVN0KAYGS7DEGRRVJSG4XTX/artifacts/api-research.md` | Complete Databricks SDK + Spark REST API endpoint inventory with fields, types, and rate limit notes |
-| Architecture | `yad2-id-link/.a5c/runs/01KKVN0KAYGS7DEGRRVJSG4XTX/artifacts/architecture.md` | Module structure, data flow, Pydantic model definitions, polling loop design, error handling strategy |
-| Specification | `yad2-id-link/.a5c/runs/01KKVN0KAYGS7DEGRRVJSG4XTX/artifacts/specification.md` | Field-level spec for every view (columns, widths, colors, formatting), all keyboard bindings, CLI validation, color scheme, widget specs |
-| Implementation Plan | `yad2-id-link/.a5c/runs/01KKVN0KAYGS7DEGRRVJSG4XTX/artifacts/implementation-plan.md` | 7-milestone plan with 38 tasks, sizing, dependencies, testing strategy |
+| API Research | `docs/planning/api-research.md` | Complete Databricks SDK + Spark REST API endpoint inventory with fields, types, and rate limit notes |
+| Architecture | `docs/planning/architecture.md` | Module structure, data flow, Pydantic model definitions, polling loop design, error handling strategy |
+| Specification | `docs/planning/specification.md` | Field-level spec for every view (columns, widths, colors, formatting), all keyboard bindings, CLI validation, color scheme, widget specs |
+| Implementation Plan | `docs/planning/implementation-plan.md` | 7-milestone plan with 38 tasks, sizing, dependencies, testing strategy |
 
 When implementing any view or component, consult the specification document for exact column definitions, colors, and formatting rules.
 
