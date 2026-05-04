@@ -612,7 +612,7 @@ token = dapi_example_token_placeholder
 host = https://adb-1234567890.12.azuredatabricks.net
 token = dapi_example_token_placeholder
 
-[yad2-dev]
+[other-profile]
 host = https://adb-0987654321.12.azuredatabricks.net
 token = dapi_example_token_placeholder
 ```
